@@ -1,5 +1,5 @@
 {
-  "name": "dsh-session-cost",
+  "name": "@kidli1412/dsh-session-cost",
   "version": "0.1.0",
   "description": "DSH web plugin: a status bar at the bottom of the conversation showing the estimated API cost of the current session (per-model token pricing, CNY) plus the live DeepSeek account balance queried through the official balance API.",
   "type": "module",
@@ -33,7 +33,9 @@
     }
   },
   "scripts": {
-    "check": "node --check lib/cost.js && node --check lib/balance.js && node --check lib/index.js && node --check lib/client.js"
+    "check": "node --check lib/cost.js && node --check lib/balance.js && node --check lib/index.js && node --check lib/client.js",
+    "test": "node scripts/smoke.mjs && node scripts/dom-smoke.mjs",
+    "prepublishOnly": "npm run check && npm test"
   },
   "keywords": [
     "dsh",
@@ -46,5 +48,19 @@
     "费用",
     "余额"
   ],
-  "license": "MIT"
+  "license": "MIT",
+  "engines": {
+    "node": "^22.19.0 || >=24.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/KIDLi1412/dsh-session-cost.git"
+  },
+  "homepage": "https://github.com/KIDLi1412/dsh-session-cost#readme",
+  "bugs": {
+    "url": "https://github.com/KIDLi1412/dsh-session-cost/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
 }

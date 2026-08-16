@@ -37,10 +37,10 @@ DSH（DeepSeek Harness）Web 插件：在**对话底部状态栏**（输入框�
 
 ## 安装
 
-本地开发（链接安装，改动即时生效）：
+从 npm 安装：
 
 ```powershell
-dsh plugin --profile web add link:C:/Projects/DSH/dsh-session-cost
+dsh plugin --profile web add @kidli1412/dsh-session-cost
 ```
 
 从 GitHub 安装：
@@ -49,7 +49,13 @@ dsh plugin --profile web add link:C:/Projects/DSH/dsh-session-cost
 dsh plugin --profile web add github:KIDLi1412/dsh-session-cost
 ```
 
-安装后重启 `dsh web`（或依赖 zh_pro 的热挂载），浏览器硬刷新（Ctrl+Shift+R）。打开任意会话即可在输入框下方看到状态栏。
+本地开发（链接安装，改动即时生效）：
+
+```powershell
+dsh plugin --profile web add link:path/to/dsh-session-cost
+```
+
+安装后重启 `dsh web`，浏览器硬刷新（Ctrl+Shift+R）。打开任意会话即可在输入框下方看到状态栏。
 
 移除：
 

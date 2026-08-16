@@ -2,11 +2,12 @@
 # cost estimation over live session event logs + a loopback-only summary
 # endpoint and a DeepSeek balance query endpoint) into the profile
 # composition. The `dsh.client` declaration in package.json makes the browser
-# half (exports "./client", served at /plugins/dsh-session-cost/client.js)
-# load in the web GUI.
+# half (exports "./client", served at
+# /plugins/@kidli1412/dsh-session-cost/client.js) load in the web GUI.
 #
 # Activate with:
 #   dsh plugin --profile web add link:C:/Projects/DSH/dsh-session-cost
+#   dsh plugin --profile web add @kidli1412/dsh-session-cost   (npm)
 - insert:
     - id: session-cost
-      name: dsh-session-cost
+      name: '@kidli1412/dsh-session-cost'
