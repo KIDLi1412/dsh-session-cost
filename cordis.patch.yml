@@ -6,7 +6,7 @@
 # /plugins/@kidli1412/dsh-session-cost/client.js) load in the web GUI.
 #
 # Activate with:
-#   dsh plugin --profile web add link:C:/Projects/DSH/dsh-session-cost
+#   dsh plugin --profile web add link:path/to/dsh-session-cost
 #   dsh plugin --profile web add @kidli1412/dsh-session-cost   (npm)
 - insert:
     - id: session-cost

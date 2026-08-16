@@ -60,7 +60,7 @@ dsh plugin --profile web add link:path/to/dsh-session-cost
 移除：
 
 ```powershell
-dsh plugin --profile web remove dsh-session-cost
+dsh plugin --profile web remove @kidli1412/dsh-session-cost
 ```
 
 ## 架构
