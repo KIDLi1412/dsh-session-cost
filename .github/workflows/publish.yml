@@ -1,0 +1,45 @@
+# Publish to npm via Trusted Publisher (OIDC) — no npm token stored anywhere.
+#
+# Configure the trusted publisher once on npmjs.com for
+# @kidli1412/dsh-session-cost:
+#   package settings → Trusted Publisher → GitHub Actions
+#     Organization or user : KIDLi1412
+#     Repository           : dsh-session-cost
+#     Workflow filename    : publish.yml
+#     Allowed actions      : npm publish
+# (or from a terminal: npm trust github @kidli1412/dsh-session-cost \
+#    --file publish.yml --repo KIDLi1412/dsh-session-cost --allow-publish)
+#
+# The workflow filename here MUST match the value configured on npmjs.com.
+
+name: Publish to npm (Trusted Publisher)
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  id-token: write # Required for npm OIDC trusted publishing
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest # GitHub-hosted runner only (self-hosted is unsupported)
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          registry-url: 'https://registry.npmjs.org'
+          package-manager-cache: false # never cache in release builds
+
+      # No npm ci: this package has zero runtime dependencies and no lockfile.
+      # npm publish runs prepublishOnly (npm run check && npm test) first;
+      # provenance attestations are generated automatically by trusted publishing.
+      - name: Publish to npm (OIDC, no token needed)
+        run: npm publish
