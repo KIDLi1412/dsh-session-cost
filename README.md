@@ -8,7 +8,7 @@ DSH（DeepSeek Harness）Web 插件：在**对话底部状态栏**（输入框�
 
 ## 界面
 
-两种显示方式可在 **设置 → 插件 → 插件配置 → 会话费用显示** 中切换（localStorage 持久化，即时生效）：
+两种显示方式可在 **设置 → 插件 → 插件配置 → 会话费用显示** 中切换（经 `session-cost` settings namespace 持久化到 `~/.dsh/settings.yaml`，即时生效；0.1.1 及更早版本的 localStorage 配置会在首次加载时自动迁移）：
 
 - **显示方式**：独立状态栏（默认）/ 并入统计栏。
 - **低余额阈值**（默认 10 元）：余额**低于**该值时显示为红色，达到或高于时显示为黑色。
@@ -67,10 +67,10 @@ dsh plugin --profile web remove @kidli1412/dsh-session-cost
 
 | 文件 | 角色 |
 | --- | --- |
-| `lib/index.js` | 服务端：`GET /api/session-cost/summary?session=<id>`（增量折叠会话事件并按模型计价）、`GET /api/session-cost/balance`（DeepSeek 余额，loopback-only 精确路由，`?refresh=1` 强制绕过缓存） |
+| `lib/index.js` | 服务端：`GET /api/session-cost/summary?session=<id>`（增量折叠会话事件并按模型计价）、`GET /api/session-cost/balance`（DeepSeek 余额，loopback-only 精确路由，`?refresh=1` 强制绕过缓存）；注册 `session-cost` settings namespace（`displayMode` + `lowBalanceThreshold`，供配置卡读写） |
 | `lib/cost.js` | 纯函数：按模型 token 折叠（replace-last-sample 语义）+ CNY 单价表 + 费用计算 |
 | `lib/balance.js` | 纯函数：DeepSeek 余额接口查询与状态归一化 |
-| `lib/client.js` | 浏览器端：`conversation.composer.dock` 槽位（id `session-cost`, order 100）+ `settings.plugin.item` 设置卡片；显示方式存 localStorage（`dsh-session-cost:config`），"并入统计栏"模式把费用/余额段追加进自带统计行 DOM（MutationObserver 在 React 重渲染后重新挂载） |
+| `lib/client.js` | 浏览器端：`conversation.composer.dock` 槽位（id `session-cost`, order 100）+ `settings.plugin.item` 设置卡片（key `session-cost`）；显示方式经 settings scope 读写上面的 namespace（加载中回退默认值），"并入统计栏"模式把费用/余额段追加进自带统计行 DOM（MutationObserver 在 React 重渲染后重新挂载） |
 
 费用为**估算值**：token 用量来自会话日志中 provider 上报的 usage 样本，单价表为写死的默认值，价格变动后请更新 `lib/cost.js` 的 `DEFAULT_PRICING`（或通过插件配置 `pricing` 覆盖）。
 
@@ -99,6 +99,8 @@ session-cost:
       cacheWrite: 1
       output: 2
 ```
+
+`pricing` 与配置卡写入的 `displayMode` / `lowBalanceThreshold` 共存于同一个 `session-cost:` section，互不覆盖（schemastery 解析保留未知键；`pricing` 仍由服务端从插件 config 读取）。
 
 ## 安全
 

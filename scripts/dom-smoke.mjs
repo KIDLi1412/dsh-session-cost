@@ -96,7 +96,7 @@ const requireStub = (id) => ({});
 const factory = descriptor.factory;
 const exportsObj = factory(requireStub);
 
-const { findStatsRow, buildMergeNode, configStore, fmtCny } = exportsObj;
+const { findStatsRow, buildMergeNode, createConfigStore, fmtCny } = exportsObj;
 const zhDict = (key) => ({
 	"本会话费用": "本会话费用", "余额": "余额", "刷新": "刷新", "刷新中…": "刷新中…",
 	"已更新 {time}": "已更新 {time}", "暂不可用": "暂不可用", "未配置 {ref}": "未配置 {ref}",
@@ -168,17 +168,67 @@ assert.equal(buildMergeNode(zhDict, {
 	costError: null, balanceError: null, balanceRef: null, refreshing: false, justRefreshed: null, onRefresh: () => {}, summary: null, lowBalanceThreshold: 10
 }), null, "empty state should build no node");
 
-// ---- configStore ------------------------------------------------------
-assert.equal(configStore.getSnapshot().displayMode, "dock", "default mode must be dock");
-assert.equal(configStore.getSnapshot().lowBalanceThreshold, 10, "default threshold must be 10");
-configStore.set({ displayMode: "stats" });
-assert.equal(configStore.getSnapshot().displayMode, "stats");
-configStore.set({ displayMode: "dock" });
-configStore.set({ lowBalanceThreshold: 15 });
-assert.equal(configStore.getSnapshot().lowBalanceThreshold, 15);
-configStore.set({ lowBalanceThreshold: -3 });
-assert.equal(configStore.getSnapshot().lowBalanceThreshold, 10, "negative threshold must fall back to default");
-configStore.set({ lowBalanceThreshold: 10 });
+// ---- createConfigStore (settings-scope backed) ------------------------
+// The store wraps a bound settings scope; exercise it with a controllable
+// mock scope instead of a live one (the live scope needs the browser +
+// Host settings transport).
+function createMockScope(initial) {
+	const listeners = new Set();
+	let snapshot = initial;
+	return {
+		getSnapshot: () => snapshot,
+		subscribe: (listener) => { listeners.add(listener); return () => listeners.delete(listener); },
+		set: async (field, value) => {
+			snapshot = { ...snapshot, value: { ...(snapshot.value ?? {}), [field]: value } };
+			for (const l of listeners) l();
+		},
+		unset: async (field) => {
+			const value = { ...snapshot.value };
+			delete value[field];
+			snapshot = { ...snapshot, value };
+			for (const l of listeners) l();
+		},
+		// test helper: publish an arbitrary snapshot (scope-load simulation)
+		publish: (next) => { snapshot = next; for (const l of listeners) l(); }
+	};
+}
+
+const mock = createMockScope({ status: "loading", value: void 0, writable: false, mode: "host" });
+const store = createConfigStore(mock);
+assert.equal(store.getSnapshot().displayMode, "dock", "loading must fall back to dock");
+assert.equal(store.getSnapshot().lowBalanceThreshold, 10, "loading must fall back to default 10");
+assert.equal(store.getSnapshot().status, "loading");
+
+// ready → resolved values flow through
+mock.publish({ status: "ready", value: { displayMode: "stats", lowBalanceThreshold: 15 }, writable: true, mode: "host" });
+assert.equal(store.getSnapshot().displayMode, "stats");
+assert.equal(store.getSnapshot().lowBalanceThreshold, 15);
+
+// unavailable → defaults again
+mock.publish({ status: "unavailable", value: void 0, writable: false, mode: "host" });
+assert.equal(store.getSnapshot().displayMode, "dock", "unavailable must fall back to dock");
+assert.equal(store.getSnapshot().lowBalanceThreshold, 10, "unavailable must fall back to default");
+
+// set() delegates to the scope (async) and sanitizes before writing
+mock.publish({ status: "ready", value: { displayMode: "dock", lowBalanceThreshold: 10 }, writable: true, mode: "host" });
+await store.set({ displayMode: "stats" });
+assert.equal(mock.getSnapshot().value.displayMode, "stats", "set must write displayMode through the scope");
+await store.set({ lowBalanceThreshold: -3 });
+assert.equal(mock.getSnapshot().value.lowBalanceThreshold, 10, "negative threshold must be sanitized before the write");
+await store.set({ lowBalanceThreshold: 25 });
+assert.equal(mock.getSnapshot().value.lowBalanceThreshold, 25, "valid threshold must write through the scope");
+await store.set({ displayMode: "dock", lowBalanceThreshold: 10 });
+assert.equal(mock.getSnapshot().value.displayMode, "dock");
+
+// subscribe notifications fire on scope changes
+let notified = 0;
+const off = store.subscribe(() => notified++);
+mock.publish({ status: "ready", value: { displayMode: "dock", lowBalanceThreshold: 10 }, writable: true, mode: "host" });
+assert.equal(notified, 1, "scope publish must notify store listeners");
+off();
+mock.publish({ status: "ready", value: { displayMode: "stats", lowBalanceThreshold: 10 }, writable: true, mode: "host" });
+assert.equal(notified, 1, "unsubscribed listener must not fire");
+store.dispose();
 
 // ---- fmtCny -----------------------------------------------------------
 assert.equal(fmtCny("7.09", 2), "7.09", "numeric string should format");
