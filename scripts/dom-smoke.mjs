@@ -202,38 +202,33 @@ function createMockScope(initial) {
 
 const mock = createMockScope({ status: "loading", value: void 0, writable: false, mode: "host" });
 const store = createConfigStore(mock);
-assert.equal(store.getSnapshot().displayMode, "dock", "loading must fall back to dock");
 assert.equal(store.getSnapshot().lowBalanceThreshold, 10, "loading must fall back to default 10");
 assert.equal(store.getSnapshot().status, "loading");
 
 // ready → resolved values flow through
-mock.publish({ status: "ready", value: { displayMode: "stats", lowBalanceThreshold: 15 }, writable: true, mode: "host" });
-assert.equal(store.getSnapshot().displayMode, "stats");
+mock.publish({ status: "ready", value: { lowBalanceThreshold: 15 }, writable: true, mode: "host" });
 assert.equal(store.getSnapshot().lowBalanceThreshold, 15);
 
 // unavailable → defaults again
 mock.publish({ status: "unavailable", value: void 0, writable: false, mode: "host" });
-assert.equal(store.getSnapshot().displayMode, "dock", "unavailable must fall back to dock");
 assert.equal(store.getSnapshot().lowBalanceThreshold, 10, "unavailable must fall back to default");
 
 // set() delegates to the scope (async) and sanitizes before writing
-mock.publish({ status: "ready", value: { displayMode: "dock", lowBalanceThreshold: 10 }, writable: true, mode: "host" });
-await store.set({ displayMode: "stats" });
-assert.equal(mock.getSnapshot().value.displayMode, "stats", "set must write displayMode through the scope");
+mock.publish({ status: "ready", value: { lowBalanceThreshold: 10 }, writable: true, mode: "host" });
 await store.set({ lowBalanceThreshold: -3 });
 assert.equal(mock.getSnapshot().value.lowBalanceThreshold, 10, "negative threshold must be sanitized before the write");
 await store.set({ lowBalanceThreshold: 25 });
 assert.equal(mock.getSnapshot().value.lowBalanceThreshold, 25, "valid threshold must write through the scope");
-await store.set({ displayMode: "dock", lowBalanceThreshold: 10 });
-assert.equal(mock.getSnapshot().value.displayMode, "dock");
+await store.set({ lowBalanceThreshold: 10 });
+assert.equal(mock.getSnapshot().value.lowBalanceThreshold, 10);
 
 // subscribe notifications fire on scope changes
 let notified = 0;
 const off = store.subscribe(() => notified++);
-mock.publish({ status: "ready", value: { displayMode: "dock", lowBalanceThreshold: 10 }, writable: true, mode: "host" });
+mock.publish({ status: "ready", value: { lowBalanceThreshold: 10 }, writable: true, mode: "host" });
 assert.equal(notified, 1, "scope publish must notify store listeners");
 off();
-mock.publish({ status: "ready", value: { displayMode: "stats", lowBalanceThreshold: 10 }, writable: true, mode: "host" });
+mock.publish({ status: "ready", value: { lowBalanceThreshold: 5 }, writable: true, mode: "host" });
 assert.equal(notified, 1, "unsubscribed listener must not fire");
 store.dispose();
 

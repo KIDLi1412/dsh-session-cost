@@ -15,16 +15,12 @@ assert.equal(typeof SETTINGS_NAMESPACE, "string");
 assert.equal(SETTINGS_NAMESPACE, "session-cost", "namespace must be session-cost");
 
 // Empty section → schema defaults (absent user layer resolves through these).
-assert.deepEqual(SessionCostSettingsSchema({}), { displayMode: "dock", lowBalanceThreshold: 10 });
+assert.deepEqual(SessionCostSettingsSchema({}), { lowBalanceThreshold: 10 });
 
 // Explicit values pass through.
-assert.deepEqual(SessionCostSettingsSchema({ displayMode: "stats", lowBalanceThreshold: 15 }), {
-	displayMode: "stats",
+assert.deepEqual(SessionCostSettingsSchema({ lowBalanceThreshold: 15 }), {
 	lowBalanceThreshold: 15
 });
-
-// Invalid enum is rejected → the Host refuses the write.
-assert.throws(() => SessionCostSettingsSchema({ displayMode: "floating" }), /displayMode/, "invalid displayMode must throw");
 
 // Negative threshold is rejected.
 assert.throws(() => SessionCostSettingsSchema({ lowBalanceThreshold: -1 }), /lowBalanceThreshold/, "negative threshold must throw");
@@ -32,10 +28,13 @@ assert.throws(() => SessionCostSettingsSchema({ lowBalanceThreshold: -1 }), /low
 // Non-number threshold is rejected (scope.set sends numbers only).
 assert.throws(() => SessionCostSettingsSchema({ lowBalanceThreshold: "10" }), /lowBalanceThreshold/, "string threshold must throw");
 
-// Unknown keys (the documented `pricing` override) are preserved, not
-// stripped, so the card fields and pricing coexist in one section.
-const resolved = SessionCostSettingsSchema({ pricing: { "deepseek-v4-flash": { input: 1, output: 2 } } });
+// Unknown keys (the documented `pricing` override AND the legacy
+// `displayMode` field from ≤0.1.4, whose standalone-bar mode no longer
+// exists) are preserved, not stripped, so the card fields and pricing
+// coexist in one section and stale displayMode does not break the write.
+const resolved = SessionCostSettingsSchema({ pricing: { "deepseek-v4-flash": { input: 1, output: 2 } }, displayMode: "stats" });
 assert.deepEqual(resolved.pricing, { "deepseek-v4-flash": { input: 1, output: 2 } }, "unknown keys must be preserved");
+assert.equal(resolved.displayMode, "stats", "legacy displayMode key must be preserved (ignored)");
 
 // ---- resolvePricing: flat and per-period override shapes -----------------
 // Defaults are untouched by an absent config.
