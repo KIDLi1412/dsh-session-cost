@@ -17,6 +17,13 @@ class El {
 		this._text = "";
 		this.handlers = {};
 		this.disabled = false;
+		this.style = {
+			_map: new Map(),
+			getPropertyValue(name) { return this._map.get(name)?.value ?? ""; },
+			getPropertyPriority(name) { return this._map.get(name)?.priority ?? ""; },
+			setProperty(name, value, priority = "") { this._map.set(name, { value: String(value), priority: priority || "" }); },
+			removeProperty(name) { this._map.delete(name); }
+		};
 	}
 	get textContent() {
 		if (this._text !== "") return this._text;
@@ -96,7 +103,7 @@ const requireStub = (id) => ({});
 const factory = descriptor.factory;
 const exportsObj = factory(requireStub);
 
-const { findStatsRow, buildMergeNode, createConfigStore, fmtCny } = exportsObj;
+const { findStatsRow, buildMergeNode, createConfigStore, fmtCny, applyMergeRowStyles, restoreMergeRowStyles } = exportsObj;
 const zhDict = (key) => ({
 	"本会话费用": "本会话费用", "余额": "余额", "刷新": "刷新", "刷新中…": "刷新中…",
 	"已更新 {time}": "已更新 {time}", "暂不可用": "暂不可用", "未配置 {ref}": "未配置 {ref}",
@@ -229,6 +236,33 @@ off();
 mock.publish({ status: "ready", value: { displayMode: "stats", lowBalanceThreshold: 10 }, writable: true, mode: "host" });
 assert.equal(notified, 1, "unsubscribed listener must not fire");
 store.dispose();
+
+// ---- merge-row styles (apply/restore round-trip) ----------------------
+// The built-in StatsLine root caps at 748px with overflow:hidden + ellipsis
+// (DSH rc.7+), clipping the appended merge node; applyMergeRowStyles widens +
+// unclips the row, restoreMergeRowStyles puts the prior inline values back.
+const styledRow = new El("div");
+styledRow.style.setProperty("max-width", "900px");
+styledRow.style.setProperty("overflow", "hidden");
+applyMergeRowStyles(styledRow);
+assert.equal(styledRow.style.getPropertyValue("max-width"), "none", "merge must widen the row");
+assert.equal(styledRow.style.getPropertyValue("overflow"), "visible", "merge must unclip the row");
+assert.equal(styledRow.style.getPropertyValue("text-overflow"), "clip", "merge must drop the ellipsis");
+applyMergeRowStyles(styledRow);
+assert.equal(styledRow.style.getPropertyValue("max-width"), "none", "re-apply must be idempotent");
+restoreMergeRowStyles(styledRow);
+assert.equal(styledRow.style.getPropertyValue("max-width"), "900px", "prior max-width must be restored");
+assert.equal(styledRow.style.getPropertyValue("overflow"), "hidden", "prior overflow must be restored");
+assert.equal(styledRow.style.getPropertyValue("text-overflow"), "", "absent text-overflow must be removed again");
+restoreMergeRowStyles(styledRow);
+assert.equal(styledRow.style.getPropertyValue("max-width"), "900px", "double restore must be a no-op");
+const plainRow = new El("div");
+restoreMergeRowStyles(plainRow);
+applyMergeRowStyles(plainRow);
+restoreMergeRowStyles(plainRow);
+assert.equal(plainRow.style.getPropertyValue("max-width"), "", "plain row must end untouched");
+assert.equal(plainRow.style.getPropertyValue("overflow"), "", "plain row must end untouched (overflow)");
+assert.equal(applyMergeRowStyles(null), void 0, "null row must be a safe no-op");
 
 // ---- fmtCny -----------------------------------------------------------
 assert.equal(fmtCny("7.09", 2), "7.09", "numeric string should format");

@@ -17,7 +17,7 @@ DSH（DeepSeek Harness）Web 插件：在**对话底部状态栏**（输入框�
 
 ![独立状态栏](docs/独立状态栏.jpg)
 
-**并入统计栏**——追加到自带统计行同一行（会话尚无统计内容时暂不显示）：
+**并入统计栏**——追加到自带统计行同一行（会话尚无统计内容时暂不显示）。DSH rc.7 起自带统计行有 748px 宽度上限 + 省略号截断，会把追加的费用/余额段裁掉；本插件在该模式下会**自动把统计行放宽到容器全宽并取消裁剪**（效果同 zh_pro「统计全显示」，但不依赖它），因此无需安装 zh_pro 也能完整显示：
 
 ![并入统计栏](docs/并入统计栏.jpg)
 
@@ -70,7 +70,7 @@ dsh plugin --profile web remove @kidli1412/dsh-session-cost
 | `lib/index.js` | 服务端：`GET /api/session-cost/summary?session=<id>`（增量折叠会话事件并按模型计价）、`GET /api/session-cost/balance`（DeepSeek 余额，loopback-only 精确路由，`?refresh=1` 强制绕过缓存）；注册 `session-cost` settings namespace（`displayMode` + `lowBalanceThreshold`，供配置卡读写） |
 | `lib/cost.js` | 纯函数：按模型 token 折叠（replace-last-sample 语义）+ CNY 单价表 + 费用计算 |
 | `lib/balance.js` | 纯函数：DeepSeek 余额接口查询与状态归一化 |
-| `lib/client.js` | 浏览器端：`conversation.composer.dock` 槽位（id `session-cost`, order 100）+ `settings.plugin.item` 设置卡片（key `session-cost`）；显示方式经 settings scope 读写上面的 namespace（加载中回退默认值），"并入统计栏"模式把费用/余额段追加进自带统计行 DOM（MutationObserver 在 React 重渲染后重新挂载） |
+| `lib/client.js` | 浏览器端：`conversation.composer.dock` 槽位（id `session-cost`, order 100）+ `settings.plugin.item` 设置卡片（key `session-cost`）；显示方式经 settings scope 读写上面的 namespace（加载中回退默认值），"并入统计栏"模式把费用/余额段追加进自带统计行 DOM（MutationObserver 在 React 重渲染后重新挂载），并放宽统计行宽度/取消裁剪让追加段可见（DSH rc.7 起 748px 上限 + ellipsis 会裁掉行尾，详见上文） |
 
 费用为**估算值**：token 用量来自会话日志中 provider 上报的 usage 样本，单价表为写死的默认值，价格变动后请更新 `lib/cost.js` 的 `DEFAULT_PRICING`（或通过插件配置 `pricing` 覆盖）。
 
