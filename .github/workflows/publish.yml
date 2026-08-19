@@ -38,7 +38,13 @@ jobs:
           registry-url: 'https://registry.npmjs.org'
           package-manager-cache: false # never cache in release builds
 
-      # No npm ci: this package has zero runtime dependencies and no lockfile.
+      # The package carries runtime deps for its settings namespace
+      # (@deepseek-ai/dsh-settings, @deepseek-ai/schemastery) and the smoke
+      # suite imports lib/index.js, so install from the committed lockfile
+      # before npm publish runs prepublishOnly (npm run check && npm test).
+      - name: Install dependencies
+        run: npm ci
+
       # npm publish runs prepublishOnly (npm run check && npm test) first;
       # provenance attestations are generated automatically by trusted publishing.
       - name: Publish to npm (OIDC, no token needed)
