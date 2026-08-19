@@ -76,18 +76,20 @@ dsh plugin --profile web remove @kidli1412/dsh-session-cost
 
 ## 定价表（默认，CNY / 百万 tokens）
 
-取自官方定价页（[模型 & 价格](https://api-docs.deepseek.com/quick_start/pricing/) 中文版，2026-08 现行价；2026-08-17 起改为峰谷定价，见官方页面）：
+取自官方定价页（[模型 & 价格](https://api-docs.deepseek.com/quick_start/pricing/) 中文版，2026-08-17 起生效）。V4 模型实行**峰谷定价**：**高峰时段为北京时间 9:00–12:00、14:00–18:00**，高峰价格 = 空闲价格的 2 倍；其余时间为空闲时段。插件按每条 usage 样本的事件时间归属时段分别计价；2026-08-17 0 时之前的样本按旧的平峰价（`LEGACY_PRICING`）计价。
 
-| 模型 | 输入（缓存未命中） | 输入（缓存命中） | 输出 |
+| 模型 | 输入（缓存未命中）空闲 / 高峰 | 输入（缓存命中）空闲 / 高峰 | 输出 空闲 / 高峰 |
 | --- | --- | --- | --- |
-| deepseek-v4-flash | ¥1 | ¥0.02 | ¥2 |
-| deepseek-v4-pro | ¥3 | ¥0.025 | ¥6 |
-| deepseek-chat（V3 遗留，默认） | ¥2 | ¥0.5 | ¥3 |
-| deepseek-reasoner（V3 遗留，默认） | ¥4 | ¥1 | ¥16 |
+| deepseek-v4-flash | ¥1.5 / ¥3.0 | ¥0.05 / ¥0.10 | ¥4.5 / ¥9.0 |
+| deepseek-v4-pro | ¥4.5 / ¥9.0 | ¥0.15 / ¥0.30 | ¥13.5 / ¥27.0 |
+| deepseek-chat（V3 遗留，默认） | ¥2（平峰） | ¥0.5 | ¥3 |
+| deepseek-reasoner（V3 遗留，默认） | ¥4（平峰） | ¥1 | ¥16 |
 
-`cacheWrite` 无 DeepSeek 等价项（上下文缓存自动命中计费），默认按缓存未命中输入价计，避免低估。
+`cacheWrite` 无 DeepSeek 等价项（上下文缓存自动命中计费），默认按缓存未命中输入价计（分时段），避免低估。V3 遗留模型未列入官方页面，保持最后已知的平峰价。
 
-插件配置（可选）可覆盖定价：
+悬停明细会显示高峰 / 空闲 / 旧价的费用拆分（跨多个时段时）。
+
+插件配置（可选）可覆盖定价——平峰格式（所有时段同价）或分时段格式：
 
 ```yaml
 # ~/.dsh/settings.yaml 或 profile 插件配置
@@ -98,6 +100,10 @@ session-cost:
       cacheRead: 0.02
       cacheWrite: 1
       output: 2
+    # 或分时段（offpeak/peak 各自覆盖，未给字段继承默认）：
+    # deepseek-v4-pro:
+    #   offpeak: { input: 4.5, output: 13.5 }
+    #   peak: { input: 9, output: 27 }
 ```
 
 `pricing` 与配置卡写入的 `displayMode` / `lowBalanceThreshold` 共存于同一个 `session-cost:` section，互不覆盖（schemastery 解析保留未知键；`pricing` 仍由服务端从插件 config 读取）。

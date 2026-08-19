@@ -7,7 +7,8 @@
 // survive resolution so the section can carry both the card's fields and the
 // pricing table without clobbering each other.
 import assert from "node:assert/strict";
-import { SETTINGS_NAMESPACE, SessionCostSettingsSchema } from "../lib/index.js";
+import { SETTINGS_NAMESPACE, SessionCostSettingsSchema, resolvePricing } from "../lib/index.js";
+import { periodsOf, LEGACY_PRICING } from "../lib/cost.js";
 
 // Namespace branding: the exact string the client card keys on.
 assert.equal(typeof SETTINGS_NAMESPACE, "string");
@@ -35,5 +36,36 @@ assert.throws(() => SessionCostSettingsSchema({ lowBalanceThreshold: "10" }), /l
 // stripped, so the card fields and pricing coexist in one section.
 const resolved = SessionCostSettingsSchema({ pricing: { "deepseek-v4-flash": { input: 1, output: 2 } } });
 assert.deepEqual(resolved.pricing, { "deepseek-v4-flash": { input: 1, output: 2 } }, "unknown keys must be preserved");
+
+// ---- resolvePricing: flat and per-period override shapes -----------------
+// Defaults are untouched by an absent config.
+const defaults = resolvePricing(undefined);
+assert.equal(defaults["deepseek-v4-flash"].offpeak.input, 1.5, "default off-peak flash input ¥1.5");
+assert.equal(defaults["deepseek-v4-flash"].peak.output, 9, "default peak flash output ¥9");
+// Flat override applies one rate to every period (resolved via periodsOf).
+const flat = resolvePricing({ pricing: { "deepseek-v4-flash": { input: 2, cacheRead: 0.1, cacheWrite: 2, output: 4 } } });
+const flatRates = periodsOf(flat["deepseek-v4-flash"], LEGACY_PRICING["deepseek-v4-flash"]);
+assert.equal(flatRates.offpeak.input, 2, "flat override sets off-peak input");
+assert.equal(flatRates.peak.input, 2, "flat override sets peak input too");
+assert.equal(flatRates.peak.cacheRead, 0.1, "flat override sets peak cacheRead");
+assert.equal(flatRates.offpeak.output, 4, "flat override sets off-peak output");
+assert.equal(flatRates.legacy.input, 2, "flat override prices the legacy period too");
+// Per-period override sets distinct 空闲/高峰 rates; untouched fields inherit.
+const perPeriod = resolvePricing({
+	pricing: {
+		"deepseek-v4-flash": {
+			offpeak: { input: 1.5, output: 4.5 },
+			peak: { input: 3, output: 9 }
+		}
+	}
+});
+assert.equal(perPeriod["deepseek-v4-flash"].offpeak.input, 1.5, "per-period off-peak input");
+assert.equal(perPeriod["deepseek-v4-flash"].peak.input, 3, "per-period peak input");
+assert.equal(perPeriod["deepseek-v4-flash"].peak.cacheRead, 0.1, "untouched peak cacheRead inherits the default");
+assert.equal(perPeriod["deepseek-v4-flash"].offpeak.cacheWrite, 1.5, "untouched off-peak cacheWrite inherits the default");
+// Invalid entries fall back, negatives rejected, unknown keys still merged.
+const sanitized = resolvePricing({ pricing: { "deepseek-v4-flash": { input: -5 }, junk: { input: 1 } } });
+assert.equal(periodsOf(sanitized["deepseek-v4-flash"], LEGACY_PRICING["deepseek-v4-flash"]).offpeak.input, 1.5, "negative override falls back to the default");
+assert.equal(sanitized.junk.input, 1, "unknown model keys keep the legacy merge behavior");
 
 console.log("settings schema contract smoke passed");
