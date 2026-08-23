@@ -15,6 +15,7 @@ import {
 	periodOf,
 	periodsOf,
 	PEAK_CUTOVER_MS,
+	WEEKEND_CUTOVER_MS,
 	DEFAULT_PRICING,
 	LEGACY_PRICING
 } from "../lib/cost.js";
@@ -64,6 +65,7 @@ assert.equal(priceOf("deepseek-official/deepseek-v4-flash").key, "deepseek-v4-fl
 assert.equal(priceOf("deepseek-v4-pro").key, "deepseek-v4-pro");
 assert.equal(priceOf("unknown/unknown-model"), null);
 assert.equal(priceOf("deepseek-official/deepseek-v4-flash-0731").key, "deepseek-v4-flash");
+assert.equal(priceOf("deepseek-official/deepseek-v4-flash-vision-exp").key, "deepseek-v4-flash-vision-exp");
 
 // ---- 峰谷 billing periods ---------------------------------------------
 // Beijing = UTC+8, no DST. Peak windows: Beijing 09:00–12:00 and 14:00–18:00.
@@ -81,8 +83,19 @@ assert.equal(periodOf(Date.UTC(2026, 7, 16, 10, 0, 0)), "legacy", "pre-cutover i
 assert.equal(periodOf(PEAK_CUTOVER_MS), "offpeak", "cutover instant (Beijing 00:00) is off-peak");
 assert.equal(periodOf(NaN), "offpeak", "missing timestamp defaults to off-peak");
 
-// Official table: off-peak is exactly half of peak, per field.
-for (const [model, entry] of Object.entries({ "deepseek-v4-flash": DEFAULT_PRICING["deepseek-v4-flash"], "deepseek-v4-pro": DEFAULT_PRICING["deepseek-v4-pro"] })) {
+// Weekend rule (2026-08-23 00:00 Beijing): Sat/Sun are off-peak all day.
+// 2026-08-22 = Sat, 2026-08-23 = Sun, 2026-08-24 = Mon, 2026-08-29 = Sat.
+assert.equal(periodOf(Date.UTC(2026, 7, 22, 2, 0, 0)), "peak", "Sat 2026-08-22 Beijing 10:00 still peak before the weekend cutover");
+assert.equal(periodOf(Date.UTC(2026, 7, 22, 12, 0, 0)), "offpeak", "Sat 2026-08-22 Beijing 20:00 off-peak");
+assert.equal(periodOf(WEEKEND_CUTOVER_MS), "offpeak", "weekend cutover instant (Sun Beijing 00:00) is off-peak");
+assert.equal(periodOf(Date.UTC(2026, 7, 23, 2, 0, 0)), "offpeak", "Sun 2026-08-23 Beijing 10:00 is off-peak on weekends");
+assert.equal(periodOf(Date.UTC(2026, 7, 23, 10, 0, 0)), "offpeak", "Sun 2026-08-23 Beijing 18:00 is off-peak on weekends");
+assert.equal(periodOf(Date.UTC(2026, 7, 24, 2, 0, 0)), "peak", "Mon 2026-08-24 Beijing 10:00 still peak on weekdays");
+assert.equal(periodOf(Date.UTC(2026, 7, 29, 2, 0, 0)), "offpeak", "Sat 2026-08-29 Beijing 10:00 off-peak");
+
+// Official table: off-peak is exactly half of peak, per field, incl. vision.
+for (const [model, entry] of Object.entries(DEFAULT_PRICING)) {
+	if (entry.offpeak === void 0 || entry.peak === void 0) continue; // flat V3 legacy entries
 	for (const field of ["input", "cacheRead", "cacheWrite", "output"]) {
 		assert.ok(Math.abs(entry.peak[field] - 2 * entry.offpeak[field]) < 1e-9, `${model} ${field}: peak must be 2× off-peak`);
 	}
