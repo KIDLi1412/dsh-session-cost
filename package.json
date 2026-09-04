@@ -1,6 +1,6 @@
 {
   "name": "@kidli1412/dsh-session-cost",
-  "version": "0.1.7",
+  "version": "0.1.8",
   "description": "DSH web plugin: a status bar at the bottom of the conversation showing the estimated API cost of the current session (per-model token pricing, CNY) plus the live DeepSeek account balance queried through the official balance API.",
   "type": "module",
   "main": "lib/index.js",
@@ -22,6 +22,14 @@
     "@deepseek-ai/dsh-settings": "^0.1.2-rc.1",
     "@deepseek-ai/schemastery": "^3.18.2"
   },
+  "peerDependencies": {
+    "@deepseek-ai/dsh-client-ui-primitives": ">=0.1.2-rc.1"
+  },
+  "peerDependenciesMeta": {
+    "@deepseek-ai/dsh-client-ui-primitives": {
+      "optional": true
+    }
+  },
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"
@@ -29,10 +37,11 @@
     "client": {
       "platform": "web",
       "inject": [
+        "@deepseek-ai/dsh-api-remotes",
+        "@deepseek-ai/dsh-client-connection",
         "@deepseek-ai/dsh-client-locale",
-        "@deepseek-ai/dsh-client-runtime",
-        "@deepseek-ai/dsh-client-ui-slots",
-        "@deepseek-ai/dsh-client-ui-primitives"
+        "@deepseek-ai/dsh-client-ui-conversation",
+        "@deepseek-ai/dsh-client-ui-settings"
       ]
     },
     "compatibility": {
@@ -45,7 +54,7 @@
   },
   "scripts": {
     "check": "node --check lib/cost.js && node --check lib/balance.js && node --check lib/index.js && node --check lib/client.js",
-    "test": "node scripts/smoke.mjs && node scripts/dom-smoke.mjs && node scripts/settings-smoke.mjs",
+    "test": "node scripts/smoke.mjs && node scripts/dom-smoke.mjs && node scripts/settings-smoke.mjs && node scripts/session-shape-smoke.mjs",
     "prepublishOnly": "npm run check && npm test"
   },
   "keywords": [
