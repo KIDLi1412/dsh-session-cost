@@ -58,6 +58,12 @@ dsh plugin --profile web add link:path/to/dsh-session-cost
 dsh plugin --profile web remove @kidli1412/dsh-session-cost
 ```
 
+## 兼容性 / Compatibility
+
+- **DSH**：manifest 通过 `dsh.compatibility.dshReleases` 将官方最新三个版本 `0.1.2-alpha.4`、`0.1.2-alpha.5`、`0.1.2-rc.1` 逐项声明为 `compatible`（DSH STORE 的精确逐版本兼容证据；仅范围声明不会恢复上架）。插件使用的客户端注入（locale / runtime / ui-slots / ui-primitives）与 Host 服务（`settings` namespace、`webServer` 精确路由）在这条版本线上保持稳定。
+- **Node**：`^22.19.0 || >=24.0.0`（与 DSH 一致）。
+- **依赖**：`@deepseek-ai/dsh-settings` 自 0.1.7 起提升为 `^0.1.2-rc.1`、`@deepseek-ai/schemastery` 提升为 `^3.18.2`，与 DSH 0.1.2 版本线对齐。npm 的 prerelease 解析规则下 `^0.1.0-rc.7` 不会解析到 `0.1.2-rc.1`（只会装 `0.1.0-rc.8`），因此较低的范围会拉到与新版 DSH 不同 train 的 settings 副本。
+
 ## 架构
 
 | 文件 | 角色 |
