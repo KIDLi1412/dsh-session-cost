@@ -139,6 +139,12 @@ class El {
 		while (node.parentElement !== null) node = node.parentElement;
 		return node.tagName === "#ROOT";
 	}
+	// The list patch trims surplus cells through `lastElementChild`; a stub that
+	// lacks it would turn that branch into a contained failure instead of a red
+	// test.
+	get lastElementChild() {
+		return this.children.length === 0 ? null : this.children[this.children.length - 1];
+	}
 	get outerHTML() {
 		const attrs = [...this.attrs.entries()].map(([k, v]) => ` ${k}="${v}"`).join("");
 		const body = this._text !== "" ? this._text : this.children.map((c) => c.outerHTML).join("");
@@ -580,6 +586,76 @@ MutationObserverStub.instances.at(-1).fire();
 assert.equal(body.querySelectorAll("[data-slot=panel]").length, panelsInBody, "a sync must not leak a panel");
 patched2.dispose();
 assert.equal(patchedPanel.parentElement, null, "teardown must remove the portaled panel");
+
+// ---- the panel's readings must move with the data too ------------------
+// Every cell of the panel list IS a slot (`dt` = row-label, `dd` = row-value /
+// panel-balance), and `querySelector` only matches DESCENDANTS — so the old
+// `cell.querySelector("[data-slot=row-value]")` resolved to null for every row
+// and `patchText` returned without writing. A manual ⟳ refresh therefore moved
+// 账户余额 (a named slot patched further up) while 充值/赠送余额 and the
+// per-model lines stayed frozen at their old numbers.
+let refreshState = mergeData({ open: true });
+const refreshLive = startStatsRowObserver(liveAnchor, () => buildMergeNode(zhDict, refreshState));
+const refreshPanel = body.querySelectorAll("[data-slot=panel]").at(-1);
+const panelList = refreshPanel.querySelector("[data-slot=panel-list]");
+const rowLabels = (panel) => panel.querySelectorAll("[data-slot=row-label]").map((cell) => cell.textContent);
+const rowValues = (panel) => panel.querySelectorAll("[data-slot=row-value]").map((cell) => cell.textContent);
+assert.deepEqual(rowLabels(refreshPanel).slice(-2), ["充值余额", "赠送余额"], "the breakdown rows must start out present");
+assert.ok(rowValues(refreshPanel)[2].includes("¥6.43"), "the breakdown must start at the old balance");
+// The merge CONTAINS a defect instead of surfacing it (an open panel must never
+// take the app down), so a broken patch shows up as a swallowed warning rather
+// than a failed assertion: record them and require none.
+const contained = [];
+const restoreWarn = console.warn;
+console.warn = (...args) => { contained.push(args.map(String).join(" ")); };
+
+// One refresh payload: a new split, a new total, and a new per-model cost.
+const repriced = mergeData().models.map((row) => ({ ...row, cost: row.cost + 0.1 }));
+refreshState = mergeData({
+	open: true,
+	cost: 1.5,
+	models: repriced,
+	totalValue: 2.5,
+	balance: { total: 2.5, toppedUp: 2.4, granted: 0.1 }
+});
+refreshLive.sync();
+assert.equal(body.querySelectorAll("[data-slot=panel]").at(-1), refreshPanel, "a refresh must keep the same panel element");
+const refreshed = rowValues(refreshPanel);
+assert.ok(refreshed[0].includes("¥0.5549"), "the per-model cost must update in place");
+assert.ok(refreshed[2].includes("¥2.4"), "充值余额 must follow the refresh");
+assert.ok(refreshed[3].includes("¥0.1"), "赠送余额 must follow the refresh");
+assert.ok(refreshPanel.querySelector("[data-slot=panel-balance]").textContent.includes("¥2.5"), "账户余额 must follow too");
+
+// A row can also turn red in place (an id the pricing table has not learned).
+refreshState = mergeData({
+	open: true,
+	cost: 1.5,
+	models: [{ ...mergeData().models[0], price: null, cost: 0 }, mergeData().models[1]],
+	totalValue: 2.5,
+	balance: { total: 2.5, toppedUp: 2.4, granted: 0.1 }
+});
+refreshLive.sync();
+const warnCell = refreshPanel.querySelectorAll("[data-slot=row-value]")[0];
+assert.ok(warnCell.textContent.includes("未计价"), "an unpriced model must say so after the patch");
+assert.equal(warnCell.getAttribute("data-warn"), "true", "the warn flag must be patched onto the row");
+
+// The list SHRINKS when the model rows give way to 暂无 token 用量 and GROWS
+// again once usage lands — all without the node's own slots changing, so both
+// the surplus cells and the missing ones have to be reconciled in place.
+refreshState = mergeData({ open: true, cost: null, models: [], totalValue: 2.5, balance: { total: 2.5, toppedUp: 2.4, granted: 0.1 } });
+refreshLive.sync();
+assert.equal(panelList.children.length, 8, "the empty state must drop the surplus model cells");
+assert.ok(rowLabels(refreshPanel)[0].includes("暂无 token 用量"), "the empty state must be reachable in place");
+refreshState = mergeData({ open: true, cost: 1.5, totalValue: 2.5, balance: { total: 2.5, toppedUp: 2.4, granted: 0.1 } });
+refreshLive.sync();
+console.warn = restoreWarn;
+assert.deepEqual(contained, [], "the list patch must never fall back to a contained failure");
+assert.deepEqual(rowLabels(refreshPanel).slice(0, 2), ["deepseek-v4-flash", "deepseek-v4-pro"], "the model rows must replace the empty-state row");
+assert.deepEqual(rowLabels(refreshPanel).slice(-2), ["充值余额", "赠送余额"], "the breakdown rows must survive the growth");
+assert.equal(panelList.children.length, 10, "the grown list must carry both model rows plus the split");
+assert.equal(rowValues(refreshPanel).length, 4, "the grown list must expose four value cells");
+refreshLive.dispose();
+assert.equal(refreshPanel.parentElement, null, "teardown must still remove the panel after in-place growth");
 
 // The DATA, not just the bar, can arrive late: on a freshly started host the
 // first summary/balance responses are still in flight while the component
