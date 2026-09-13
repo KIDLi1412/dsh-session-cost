@@ -4,17 +4,21 @@ DSH（DeepSeek Harness）Web 插件：把**本次会话的 Token 费用估算**�
 
 - 费用估算：服务端按**模型逐条计价**——从会话事件日志折叠出每个模型的输入/输出/缓存命中 token（语义与 `dsh-token-meter` 的 `tokenUsage` 投影一致），再按 CNY 单价表（`lib/cost.js`）计算费用，混合多模型的会话也精确。
 - 余额查询：复用官方余额接口 `GET {baseURL}/user/balance`（参考插件 [dsh-usage-stats](https://github.com/Ychris12138/dsh-usage-stats) 的余额方案），凭据经 DSH 的 credentials 缝解析，2 分钟内存缓存 + 单飞防抖；`?refresh=1` 可强制绕过缓存（状态栏的 ⟳ 手动刷新即用此参数）。
-- 每 30 秒刷新费用、每 5 分钟刷新余额；token 用量变化后自动触发费用刷新；悬停显示分模型明细与余额构成（充值/赠送），⟳ 按钮手动刷新（强制查询上游，成功后短暂显示"已更新 HH:MM"）。
+- 每 30 秒刷新费用、每 5 分钟刷新余额；token 用量变化后自动触发费用刷新；**点击统计栏里的费用 pill** 展开分模型明细与余额构成（充值/赠送），面板内 ⟳ 手动刷新（强制查询上游，成功后短暂显示"已更新 HH:MM"）。
 
 ## 界面
 
-费用/余额段**追加到自带统计栏同一行**，与轮次/时长/token 各项读数并列（会话尚无统计内容时暂不显示）：
+费用/余额是一个与自带统计项**同款的可点击 pill**，追加在自带统计栏同一行（会话尚无统计内容时整行都不存在，也就暂不显示）：
 
-![并入统计栏](docs/并入统计栏.jpg)
+```
+[⏱ 2 轮 61 步 · 287 tok/s]   [🗄 6.6M tok · 缓存命中 97%]   [¥ 费用 ¥1.94 · 余额 ¥3.63]
+```
 
-- DSH 0.1.5 起自带统计栏改为 **`StatsPills`**：居中的 flex 行、由带图标的 pill 组成（`data-composer-stats` 标记），取代了此前单行省略号文本的 `StatsLine`。本插件的费用段因此按同一套 13/20 字号层级、同一 12px 行内间距渲染，自带 ¥ 图标，视觉上与自带 pill 齐平。
-- **自带统计栏会"迟到"**：`StatsPills` 在会话有步骤或 token 之前返回 `null`（整行都不存在），所以插件必须能在统计栏**之后**挂载的情况下仍然接上去——见下文「实现要点」。
-- ≤ 0.1.4 的自带统计行有 748px 宽度上限 + 省略号截断，会把追加的费用/余额段裁掉；本插件会**自动把统计行放宽到容器全宽并取消裁剪**（效果同 zh_pro「统计全显示」，但不依赖它），因此无需安装 zh_pro 也能完整显示。
+- **点击 pill** 在统计栏上方展开明细面板，用的是自带两个 pill 点击展开时的**同一套皮肤**（圆角 12、`--dsw-specific-menu` 背景、标题 + 分隔线 + `dt/dd` 网格、12/18 字号）：标题行左侧「费用」、右侧总额；网格里**每个模型一行**（输入/输出 tokens 与费用，跨峰谷时附 `高峰/空闲` 拆分），然后是余额与充值/赠送构成；底部是更新时间、⟳ 手动刷新与计价说明。点击面板外或按 `Esc` 关闭。
+- 面板以 `position:fixed` 挂到 `document.body` 并做视口夹取（与原生 stat dialog 相同的 measure→place 流程、同样的 8px 间距 / 12px 边距），所以不会被统计栏的 `overflow` 裁掉；数据更新走**原地 patch**（不重建节点），因此面板开着时刷新数值不会闪断、也不会丢焦点。
+- DSH 0.1.5 起自带统计栏改为 **`StatsPills`**：居中的 flex 行、由带图标的 pill 组成（`data-composer-stats` 标记），取代了此前单行省略号文本的 `StatsLine`。本插件的 pill 因此按同一套 13/20 字号层级、同一 `1px 8px` 内边距与 24px 圆角、同一 hover / `aria-expanded` 背景渲染，自带 ¥ 图标，视觉上与自带 pill 齐平。
+- **自带统计栏会"迟到"**：`StatsPills` 在会话有步骤或 token 之前返回 `null`（整行都不存在），所以插件必须能在统计栏**之后**挂载的情况下仍然接上去——见下文「兼容性」。
+- ≤ 0.1.4 的自带统计行有 748px 宽度上限 + 省略号截断，会把追加段裁掉；本插件会**自动把统计行放宽到容器全宽并取消裁剪**（效果同 zh_pro「统计全显示」，但不依赖它），因此无需安装 zh_pro 也能完整显示。
 
 设置项（**设置 → 插件 → 插件配置 → 会话费用显示**，经 `session-cost` settings namespace 持久化到 `~/.dsh/settings.yaml`，即时生效；0.1.1 及更早版本的 localStorage 配置会在首次加载时自动迁移）：
 
@@ -22,15 +26,17 @@ DSH（DeepSeek Harness）Web 插件：把**本次会话的 Token 费用估算**�
 
 > 0.1.5 起移除了「独立状态栏」显示方式（统计栏下方单独一行），只保留并入统计栏；旧配置里的 `displayMode` 键会被忽略。
 
-悬停气泡（示例）：
+展开面板内容（示例）：
 
 ```
-本会话费用估算: ¥0.1234
-  deepseek-v4-flash · 输入 12,345 tokens · 输出 1,234 tokens · ¥0.0152
-余额: ¥36.44
-  充值余额: ¥30.00
-  赠送余额: ¥6.44
-更新于 10:32
+费用                                    ¥1.9400
+────────────────────────────────────────────────
+deepseek-v4-flash     输入 169,013 · 输出 46,512 · ¥1.8900
+deepseek-v4-pro       输入 1,000 · 输出 500 · ¥0.0500 · 高峰 ¥0.02 · 空闲 ¥0.03
+余额                                    ¥36.44
+充值余额                                ¥30.00
+赠送余额                                 ¥6.44
+更新于 10:32                                 ⟳
 费用为估算值：token 用量来自会话日志，单价见官方定价页（…）。
 ```
 
@@ -81,7 +87,7 @@ dsh plugin --profile web remove @kidli1412/dsh-session-cost
 | `lib/index.js` | 服务端：`GET /api/session-cost/summary?session=<id>`（增量折叠会话事件并按模型计价）、`GET /api/session-cost/balance`（DeepSeek 余额，loopback-only 精确路由，`?refresh=1` 强制绕过缓存）；注册 `session-cost` settings namespace（`lowBalanceThreshold`，供配置卡读写） |
 | `lib/cost.js` | 纯函数：按模型 token 折叠（replace-last-sample 语义）+ CNY 单价表 + 费用计算 |
 | `lib/balance.js` | 纯函数：DeepSeek 余额接口查询与状态归一化 |
-| `lib/client.js` | 浏览器端：`conversation.composer.dock` 槽位（id `session-cost`, order 100）+ `settings.plugin.item` 设置卡片（key `session-cost`）；把费用/余额段追加进自带统计栏 DOM（`startStatsRowObserver`：子树 MutationObserver，统计栏迟到/被 React 重渲染后都会重新挂载），并放宽统计栏宽度/取消裁剪让追加段可见（详见上文） |
+| `lib/client.js` | 浏览器端：`conversation.composer.dock` 槽位（id `session-cost`, order 100）+ `settings.plugin.item` 设置卡片（key `session-cost`）；把费用/余额 pill 追加进自带统计栏 DOM（`startStatsRowObserver`：子树 MutationObserver，统计栏迟到/被 React 重渲染后都会重新挂载；`updateMergeNode` 原地 patch 数值），点击展开挂到 `document.body` 的明细面板（`placeOpenPanel` 做视口夹取） |
 
 费用为**估算值**：token 用量来自会话日志中 provider 上报的 usage 样本，单价表为写死的默认值，价格变动后请更新 `lib/cost.js` 的 `DEFAULT_PRICING`（或通过插件配置 `pricing` 覆盖）。
 

@@ -6,6 +6,23 @@ import vm from "node:vm";
 import assert from "node:assert/strict";
 
 // ---- minimal DOM shim ------------------------------------------------
+/** CSSStyleDeclaration stand-in: properties plus the setProperty/getPropertyValue API. */
+class Style {
+	constructor() { this._map = new Map(); }
+	// A real declaration exposes every property as an own accessor; the code
+	// under test assigns `style.left = …` directly, so mirror those two.
+	get left() { return this._map.get("left")?.value ?? ""; }
+	set left(value) { this._map.set("left", { value: String(value), priority: "" }); }
+	get top() { return this._map.get("top")?.value ?? ""; }
+	set top(value) { this._map.set("top", { value: String(value), priority: "" }); }
+	get visibility() { return this._map.get("visibility")?.value ?? ""; }
+	set visibility(value) { this._map.set("visibility", { value: String(value), priority: "" }); }
+	getPropertyValue(name) { return this._map.get(name)?.value ?? ""; }
+	getPropertyPriority(name) { return this._map.get(name)?.priority ?? ""; }
+	setProperty(name, value, priority = "") { this._map.set(name, { value: String(value), priority: priority || "" }); }
+	removeProperty(name) { this._map.delete(name); }
+}
+
 class El {
 	constructor(tag) {
 		this.tagName = String(tag).toUpperCase();
@@ -17,20 +34,38 @@ class El {
 		this._text = "";
 		this.handlers = {};
 		this.disabled = false;
-		this.style = {
-			_map: new Map(),
-			getPropertyValue(name) { return this._map.get(name)?.value ?? ""; },
-			getPropertyPriority(name) { return this._map.get(name)?.priority ?? ""; },
-			setProperty(name, value, priority = "") { this._map.set(name, { value: String(value), priority: priority || "" }); },
-			removeProperty(name) { this._map.delete(name); }
-		};
+		this.hidden = false;
+		// Layout is stubbed: a fixed positive box keeps placePanel's arithmetic
+		// finite, and getBoundingClientRect mirrors where the element sits.
+		this.offsetWidth = 320;
+		this.offsetHeight = 160;
+		this.rect = { top: 100, bottom: 124, left: 40, right: 140, width: 100, height: 24 };
+		this.style = new Style();
 	}
+	// Real DOM semantics: a text node's content IS its data, and writing a
+	// string replaces every child. The earlier "own text first" shortcut hid
+	// exactly the bug this shim is meant to catch (a text write on a container
+	// wiping its child elements).
 	get textContent() {
-		if (this._text !== "") return this._text;
-		return this.children.map((c) => c.textContent).join("");
+		if (this.children.length > 0) return this.children.map((c) => c.textContent).join("");
+		return this._text;
 	}
 	set textContent(value) {
 		this._text = String(value);
+		this.children = [];
+	}
+	getBoundingClientRect() { return this.rect; }
+	contains(node) {
+		let current = node;
+		while (current !== null && current !== void 0) {
+			if (current === this) return true;
+			current = current.parentElement;
+		}
+		return false;
+	}
+	dispatchEvent(event) {
+		for (const fn of this.handlers[event.type] ?? []) fn(event);
+		return true;
 	}
 	get className() {
 		return this.attrs.get("class") ?? "";
@@ -49,8 +84,17 @@ class El {
 		if (index !== -1) this.parentElement.children.splice(index, 1);
 		this.parentElement = null;
 	}
+	replaceWith(other) {
+		if (this.parentElement === null) return;
+		const parent = this.parentElement;
+		const index = parent.children.indexOf(this);
+		if (index !== -1) parent.children[index] = other;
+		other.parentElement = parent;
+		this.parentElement = null;
+	}
 	setAttribute(name, value) { this.attrs.set(name, String(value)); }
 	getAttribute(name) { return this.attrs.has(name) ? this.attrs.get(name) : null; }
+	removeAttribute(name) { this.attrs.delete(name); }
 	hasAttribute(name) { return this.attrs.has(name); }
 	addEventListener(type, fn) { (this.handlers[type] ??= []).push(fn); }
 	querySelector(selector) {
@@ -58,30 +102,34 @@ class El {
 		return hits.length === 0 ? null : hits[0];
 	}
 	querySelectorAll(selector) {
-		const parts = selector.split(",").map((part) => part.trim());
-		const matches = (el) => {
-			for (const part of parts) {
-				if (part.startsWith("[")) {
-					const m = /^\[([\w-]+)(?:=(["']?)(.*?)\2)?\]$/.exec(part);
-					if (m !== null) {
-						if (m[3] === void 0) {
-							if (el.hasAttribute(m[1])) return true;
-						} else if (el.getAttribute(m[1]) === m[3]) return true;
-					}
-					continue;
-				}
-				if (part.startsWith(".")) {
-					if (el.attrs.get("class")?.split(/\s+/).includes(part.slice(1)) ?? false) return true;
-					continue;
-				}
-				if (el.tagName === part.toUpperCase()) return true;
+		// Compound-aware, deliberately tiny: split the comma list, then split
+		// each selector into simple parts (`[attr…]`, `.class`, `tag`) and
+		// require every part to match — enough for `[slot][flag]` lookups.
+		const groups = selector.split(",").map((group) => {
+			const parts = [];
+			const pattern = /\[[^\]]*\]|\.[\w-]+|[A-Za-z][\w-]*/g;
+			let hit;
+			while ((hit = pattern.exec(group)) !== null) parts.push(hit[0]);
+			return parts;
+		});
+		const matchesPart = (el, part) => {
+			if (part.startsWith("[")) {
+				const m = /^\[([\w-]+)(?:=(["']?)(.*?)\2)?\]$/.exec(part);
+				if (m === null) return false;
+				if (m[3] === void 0) return el.hasAttribute(m[1]);
+				return el.getAttribute(m[1]) === m[3];
 			}
-			return false;
+			if (part.startsWith(".")) return el.attrs.get("class")?.split(/\s+/).includes(part.slice(1)) ?? false;
+			return el.tagName === part.toUpperCase();
 		};
+		const matches = (el) => groups.some((parts) => parts.length > 0 && parts.every((part) => matchesPart(el, part)));
 		const found = [];
+		// Descendants only: querySelectorAll never matches the element itself.
 		const walk = (el) => {
-			if (matches(el)) found.push(el);
-			for (const child of el.children) walk(child);
+			for (const child of el.children) {
+				if (matches(child)) found.push(child);
+				walk(child);
+			}
 		};
 		walk(this);
 		return found;
@@ -116,22 +164,48 @@ class MutationObserverStub {
 MutationObserverStub.instances = [];
 
 const root = new El("#root");
+const body = new El("body");
+root.appendChild(body);
+const documentListeners = new Map();
 const document = {
 	createElement: (tag) => new El(tag),
 	createElementNS: (_ns, tag) => new El(tag),
 	querySelector: () => null,
 	head: new El("head"),
-	documentElement: root
+	body,
+	documentElement: root,
+	addEventListener(type, fn) {
+		if (!documentListeners.has(type)) documentListeners.set(type, []);
+		documentListeners.get(type).push(fn);
+	},
+	removeEventListener(type, fn) {
+		const list = documentListeners.get(type);
+		if (list === void 0) return;
+		const at = list.indexOf(fn);
+		if (at !== -1) list.splice(at, 1);
+	}
 };
+/** Fire every document-level listener of one type (outside-click / Escape). */
+function fireDocument(type, event = {}) {
+	for (const fn of [...(documentListeners.get(type) ?? [])]) fn({ type, target: null, ...event });
+}
+
+/** Minimal Event stand-in for the node's disposal event. */
+class EventStub {
+	constructor(type) { this.type = type; }
+}
 
 // ---- load the client bundle ------------------------------------------
 let descriptor = null;
 globalThis.window = {
 	__ModuleLoader__: { load: (m) => { descriptor = m; } },
-	addEventListener: () => {}
+	addEventListener: () => {},
+	innerWidth: 1280,
+	innerHeight: 800
 };
 globalThis.document = document;
 globalThis.MutationObserver = MutationObserverStub;
+globalThis.Event = EventStub;
 vm.runInThisContext(readFileSync(new URL("../lib/client.js", import.meta.url), "utf8"));
 assert.ok(descriptor !== null, "client bundle did not self-register");
 const requireStub = (id) => ({});
@@ -140,10 +214,11 @@ const exportsObj = factory(requireStub);
 
 const { findStatsRow, startStatsRowObserver, buildMergeNode, createConfigStore, fmtCny, applyMergeRowStyles, restoreMergeRowStyles } = exportsObj;
 const zhDict = (key) => ({
-	"本会话费用": "本会话费用", "余额": "余额", "刷新": "刷新", "刷新中…": "刷新中…",
+	"cost": "费用", "balance": "余额", "费用": "费用", "余额": "余额", "刷新": "刷新", "刷新中…": "刷新中…",
 	"已更新 {time}": "已更新 {time}", "暂不可用": "暂不可用", "未配置 {ref}": "未配置 {ref}",
 	"currencySymbol": "¥", "tooltipCost": "本会话费用估算", "tooltipBalance": "账户余额",
 	"tooltipInput": "输入", "tooltipOutput": "输出", "tooltipTokens": "tokens",
+	"tooltipPeak": "peak", "tooltipOffpeak": "offpeak", "tooltipLegacy": "legacy",
 	"tooltipToppedUp": "充值余额", "tooltipGranted": "赠送余额", "tooltipUpdated": "更新于 {time}",
 	"tooltipPricingNote": "note", "tooltipNoModels": "暂无 token 用量"
 }[key] ?? key);
@@ -205,7 +280,10 @@ assert.equal(findStatsRow(new El("div")), null, "empty container should return n
 // ---- buildMergeNode ---------------------------------------------------
 const mergeData = (over = {}) => ({
 	cost: 0.4549,
-	models: [{ model: "deepseek-official/deepseek-v4-flash", inputTokens: 169013, outputTokens: 46512, cost: 0.4549 }],
+	models: [
+		{ model: "deepseek-official/deepseek-v4-flash", inputTokens: 169013, outputTokens: 46512, cost: 0.4549 },
+		{ model: "deepseek-official/deepseek-v4-pro", inputTokens: 1000, outputTokens: 500, cost: 0.02, peakCost: 0.01, offpeakCost: 0.01 }
+	],
 	balance: { total: 6.43, toppedUp: 6.43, granted: 0 },
 	totalValue: 6.43,
 	hasBalance: true,
@@ -214,44 +292,105 @@ const mergeData = (over = {}) => ({
 	balanceRef: null,
 	refreshing: false,
 	justRefreshed: null,
+	open: false,
+	onToggle: () => {},
 	onRefresh: () => {},
 	summary: { updatedAt: 1786809589811 },
 	lowBalanceThreshold: 10,
 	...over
 });
-const node = buildMergeNode(zhDict, mergeData());
+
+// The panel is portaled to document.body (so the bar's overflow cannot clip
+// it). Each node registers its own panel here so a test can address the panel
+// of the node it just built rather than whichever one body lists first.
+const panelsByNode = new WeakMap();
+const nodePanel = (node) => panelsByNode.get(node) ?? null;
+const built = (dict, data) => {
+	const element = buildMergeNode(dict, data);
+	if (element !== null) panelsByNode.set(element, body.querySelectorAll("[data-slot=panel]").at(-1) ?? null);
+	return element;
+};
+
+// The trigger is a pill button (the ship's `.pill` recipe) whose label carries
+// the two readings; the panel is the old hover tooltip, portaled and hidden.
+const node = built(zhDict, mergeData());
 assert.ok(node !== null, "merge node should be built");
-const text = node.textContent;
-assert.ok(text.includes("¥0.4549"), `cost value missing in "${text}"`);
-assert.ok(text.includes("¥6.43"), `balance value missing in "${text}"`);
-assert.ok(node.hasAttribute("title"), "hover title missing");
-const button = node.querySelector("button");
-assert.ok(button !== null, "refresh button missing");
-assert.equal(button.disabled, false);
-// 0.1.5 pill parity: the cost reading leads with its own glyph, and the label
-// and value are separate elements (no trailing separator space baked in).
-assert.ok(node.querySelector("svg") !== null, "cost glyph missing");
-assert.ok(node.querySelectorAll(".sco_mergeVal").length === 2, "cost and balance values must be separate elements");
-assert.equal(node.querySelector(".sco_mergeSep").textContent, "|", "cost and balance must be separated");
-// The label is its own element: the spacing between glyph, label and value is
-// the flex gap, so no literal space is baked into the text nodes.
-assert.ok(node.textContent.includes("cost¥0.4549"), `label and value must be adjacent text nodes in "${text}"`);
+const trigger = node.querySelector("[data-slot=trigger]");
+assert.ok(trigger !== null, "trigger pill missing");
+assert.equal(trigger.tagName, "BUTTON", "the trigger must be a button");
+assert.equal(trigger.className, "sco_mergeBtn", "the trigger must wear the pill class");
+assert.equal(trigger.getAttribute("aria-expanded"), "false", "a closed panel must report aria-expanded=false");
+assert.equal(trigger.getAttribute("aria-haspopup"), "dialog", "the trigger must advertise its dialog");
+assert.ok(trigger.querySelector("svg") !== null, "the trigger must lead with its ¥ glyph");
+const triggerText = trigger.textContent;
+assert.ok(triggerText.includes("费用 ¥0.4549"), `cost reading missing in "${triggerText}"`);
+assert.ok(triggerText.includes("余额 ¥6.43"), `balance reading missing in "${triggerText}"`);
+assert.equal(trigger.querySelector(".sco_mergeSep").textContent, "·", "the two readings must be joined by a middot");
+assert.equal(node.querySelectorAll(".sco_mergeVal").length, 2, "cost and balance values must be separate elements");
+assert.equal(node.hasAttribute("title"), false, "the hover title must be gone (the panel replaced it)");
 
-// Threshold behavior: 6.43 < 10 → warn (red); 6.43 < 5 → no warn (black).
-const warnVal = node.querySelector("[data-warn=true]");
+// The panel is portaled to document.body (so the bar's overflow cannot clip
+// it), which is why it is looked up through the node's registration above.
+const panel = nodePanel(node);
+assert.ok(panel !== null, "details panel missing");assert.equal(panel.hidden, true, "the panel must start closed");
+assert.equal(panel.getAttribute("role"), "dialog", "the panel must be a dialog");
+// Panel content: title total, one row pair per model, balance split.
+assert.equal(panel.querySelector("[data-slot=title-value]").textContent, "¥0.4549", "title total missing");
+assert.equal(panel.querySelectorAll("[data-slot=row-label]").length, 5, "two model rows + balance + toppedUp + granted expected");
+const modelValue = panel.querySelectorAll("[data-slot=row-value]")[0].textContent;
+assert.ok(modelValue.includes("输入 169,013") && modelValue.includes("¥0.4549"), `model row malformed: "${modelValue}"`);
+// A model that billed two periods appends the 峰谷 split.
+const splitValue = panel.querySelectorAll("[data-slot=row-value]")[1].textContent;
+assert.ok(splitValue.includes("peak ¥0.01") && splitValue.includes("offpeak ¥0.01"), `billing split missing: "${splitValue}"`);
+assert.equal(panel.querySelector("[data-slot=panel-balance]").textContent, "¥6.43", "panel balance missing");
+assert.ok(panel.querySelector("[data-slot=panel-note]").textContent.length > 0, "the pricing note must be shown");
+const refresh = panel.querySelector("[data-slot=refresh]");
+assert.ok(refresh !== null, "refresh button missing");
+assert.equal(refresh.disabled, false);
+assert.ok(panel.querySelector("[data-slot=panel-updated]").textContent.includes("更新于"), "update time missing");
+assert.equal(panel.parentElement.tagName, "BODY", "the panel must be portaled to body so the bar cannot clip it");
+
+// Threshold behavior: 6.43 < 10 → warn (red); 6.43 < 5 → no warn.
+const warnVal = node.querySelector("[data-slot=balance][data-warn=true]");
 assert.ok(warnVal !== null, "balance below threshold must be marked warn");
-assert.equal(warnVal.textContent, "¥6.43", "the warn element must be the balance value");
+assert.ok(warnVal.textContent.includes("¥6.43"), "the warn element must be the balance reading");
 const noWarn = buildMergeNode(zhDict, mergeData({ lowBalanceThreshold: 5 }));
-assert.equal(noWarn.querySelector("[data-warn=true]"), null, "balance above threshold must not be marked warn");
+assert.equal(noWarn.querySelector("[data-slot=balance][data-warn=true]"), null, "balance above threshold must not be marked warn");
 
-// Identical rebuilds must be stable (outerHTML compare used by sync()).
-const node2 = buildMergeNode(zhDict, mergeData());
-assert.equal(node.outerHTML, node2.outerHTML, "identical data must produce identical node HTML");
+// An open panel keeps its open flag on the node; its OWNER places it once the
+// node is in the DOM (`startStatsRowObserver` calls placeOpenPanel), so a
+// freshly built node is correctly not placed yet.
+const openNode = buildMergeNode(zhDict, mergeData({ open: true }));
+panelsByNode.set(openNode, body.querySelectorAll("[data-slot=panel]").at(-1) ?? null);
+const openPanel = nodePanel(openNode);
+assert.equal(openPanel.hidden, false, "an open panel must not be hidden");
+assert.equal(openPanel.getAttribute("role"), "dialog");
+assert.equal(openNode.querySelector("[data-slot=trigger]").getAttribute("aria-expanded"), "true");
+assert.equal(openPanel.style.visibility, "", "an unplaced panel must not claim to be visible");
+
+// Escaping not offered: the panel closes on Escape and on an outside pointerdown.
+const toggleCalls = [];
+const interactive = buildMergeNode(zhDict, mergeData({ open: true, onToggle: (open) => toggleCalls.push(open) }));
+panelsByNode.set(interactive, body.querySelectorAll("[data-slot=panel]").at(-1) ?? null);
+const interactivePanel = nodePanel(interactive);
+interactive.querySelector("[data-slot=trigger]").dispatchEvent(new EventStub("click"));
+assert.deepEqual(toggleCalls, [true], "clicking an open pill must ask to close it");
+fireDocument("keydown", { key: "Escape" });
+assert.deepEqual(toggleCalls, [true, true], "Escape must ask to close the panel");
+fireDocument("pointerdown", { target: new El("div") });
+assert.deepEqual(toggleCalls, [true, true, true], "an outside pointerdown must ask to close the panel");
+fireDocument("pointerdown", { target: interactivePanel });
+assert.equal(toggleCalls.length, 3, "a pointerdown inside the panel must not close it");
+// Disposal drops the document listeners and the portaled panel.
+interactive.dispatchEvent(new EventStub("session-cost:dispose"));
+fireDocument("keydown", { key: "Escape" });
+assert.equal(toggleCalls.length, 3, "a disposed node must stop reacting to document events");
+assert.equal(interactivePanel.parentElement, null, "disposal must remove the portaled panel");
 
 // Nothing to show → null (used to clean up when the row loses content).
 assert.equal(buildMergeNode(zhDict, {
 	cost: null, models: [], balance: null, totalValue: null, hasBalance: false,
-	costError: null, balanceError: null, balanceRef: null, refreshing: false, justRefreshed: null, onRefresh: () => {}, summary: null, lowBalanceThreshold: 10
+	costError: null, balanceError: null, balanceRef: null, refreshing: false, justRefreshed: null, open: false, onToggle: () => {}, onRefresh: () => {}, summary: null, lowBalanceThreshold: 10
 }), null, "empty state should build no node");
 
 // ---- startStatsRowObserver (the late-appearing 0.1.5 bar) -------------
@@ -289,17 +428,41 @@ const appended = liveBar.querySelector("[data-session-cost-merge]");
 assert.ok(appended !== null, "bar appearing after mount must receive the merge");
 assert.equal(liveBar.style.getPropertyValue("max-width"), "none", "the bar must be widened for the appended row");
 
-// A second sync with identical data must keep the SAME node (listener intact).
-const sameNode = liveBar.querySelector("[data-session-cost-merge]");
-observer.fire();
-assert.equal(liveBar.querySelector("[data-session-cost-merge]"), sameNode, "identical state must not rebuild the merge node");
-
 // Teardown removes the node, restores the inline styles and disconnects.
 disposeObserver();
 assert.equal(liveBar.querySelector("[data-session-cost-merge]"), null, "teardown must remove the merge node");
 assert.equal(liveBar.style.getPropertyValue("max-width"), "", "teardown must restore the bar's inline styles");
 assert.ok(observer.disconnected > 0, "teardown must disconnect the observer");
 assert.equal(startStatsRowObserver(null, () => null)(), void 0, "a missing anchor must be a safe no-op");
+
+// A data change patches values in place: same node, same trigger (listener
+// intact, panel open) with the new readings. The shape stays identical here —
+// the same segments are present — which is exactly when patching applies.
+let liveState = mergeData({ open: true });
+const disposePatched = startStatsRowObserver(liveAnchor, () => buildMergeNode(zhDict, liveState));
+const patched = liveBar.querySelector("[data-session-cost-merge]");
+const patchedTrigger = patched.querySelector("[data-slot=trigger]");
+const patchedPanel = body.querySelectorAll("[data-slot=panel]").at(-1);
+assert.equal(patchedPanel.hidden, false, "an open panel must survive the mount");
+assert.equal(patchedPanel.style.visibility, "visible", "the mounted panel must be placed");
+assert.equal(patchedPanel.style.top, "132px", "the mounted panel must sit above its trigger");
+liveState = mergeData({ open: true, cost: 1.5, totalValue: 2.5 });
+MutationObserverStub.instances.at(-1).fire();
+const afterPatch = liveBar.querySelector("[data-session-cost-merge]");
+assert.equal(afterPatch, patched, "an update must patch the node, not replace it");
+assert.equal(afterPatch.querySelector("[data-slot=trigger]"), patchedTrigger, "the trigger element must be preserved");
+assert.ok(afterPatch.querySelector("[data-slot=cost]").textContent.includes("¥1.5"), "the cost reading must update");
+assert.ok(afterPatch.querySelector("[data-slot=balance]").textContent.includes("¥2.5"), "the balance reading must update");
+assert.equal(body.querySelectorAll("[data-slot=panel]").at(-1), patchedPanel, "the panel element must be preserved");
+assert.equal(patchedPanel.hidden, false, "the patch must not close an open panel");
+// The candidate node built for the patch is discarded with its own panel, so a
+// sync never leaks a panel into document.body.
+const panelsInBody = body.querySelectorAll("[data-slot=panel]").length;
+MutationObserverStub.instances.at(-1).fire();
+assert.equal(body.querySelectorAll("[data-slot=panel]").length, panelsInBody, "a sync must not leak a panel");
+disposePatched();
+assert.equal(patchedPanel.parentElement, null, "teardown must remove the portaled panel");
+
 // With nothing to display there is no bar to decorate: no observer is built.
 const observerCount = MutationObserverStub.instances.length;
 assert.equal(startStatsRowObserver(liveAnchor, () => null)(), void 0, "an empty merge state must be a safe no-op");
