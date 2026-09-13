@@ -422,7 +422,10 @@ const disposeObserver = startStatsRowObserver(liveAnchor, () => {
 	mergeCalls.push(Date.now());
 	return buildMergeNode(zhDict, mergeData());
 });
-assert.equal(mergeCalls.length, 1, "observer must probe the merge state once up front");
+// Nothing to build against yet: no bar, so no candidate is even asked for. The
+// observer is installed anyway — that is the point of this regression.
+assert.equal(mergeCalls.length, 0, "no bar yet means no merge candidate is built");
+assert.ok(MutationObserverStub.instances.length > 0, "the observer must be installed before any data exists");
 
 // The bar mounts later, exactly like StatsPills flipping from null to a bar.
 liveHost.appendChild(liveBar);
@@ -470,10 +473,31 @@ assert.equal(body.querySelectorAll("[data-slot=panel]").length, panelsInBody, "a
 disposePatched();
 assert.equal(patchedPanel.parentElement, null, "teardown must remove the portaled panel");
 
-// With nothing to display there is no bar to decorate: no observer is built.
+// The DATA, not just the bar, can arrive late: on a freshly started host the
+// first summary/balance responses are still in flight while the component
+// mounts. An empty merge state must therefore still install the observer (the
+// earlier bail-out is exactly why the pill only showed up after a page reload
+// had warmed the data), and the merge must appear once the payload lands.
+const emptyStateHost = new El("div");
+root.appendChild(emptyStateHost);
+const emptyAnchor = new El("div");
+emptyAnchor.setAttribute("data-session-cost-anchor", "");
+emptyStateHost.appendChild(emptyAnchor);
+const emptyBar = new El("div");
+emptyBar.setAttribute("data-composer-stats", "");
+emptyStateHost.appendChild(emptyBar);
+let payload = null; // nothing fetched yet
 const observerCount = MutationObserverStub.instances.length;
-assert.equal(startStatsRowObserver(liveAnchor, () => null)(), void 0, "an empty merge state must be a safe no-op");
-assert.equal(MutationObserverStub.instances.length, observerCount, "an empty merge state must not install an observer");
+const disposeEmpty = startStatsRowObserver(emptyAnchor, () => (payload === null ? null : buildMergeNode(zhDict, payload)));
+assert.equal(MutationObserverStub.instances.length, observerCount + 1, "an empty merge state must still install an observer");
+assert.equal(emptyBar.querySelector("[data-session-cost-merge]"), null, "no data yet means no merge node");
+// The payload arrives; the next mutation must attach the merge.
+payload = mergeData();
+MutationObserverStub.instances.at(-1).fire();
+assert.ok(emptyBar.querySelector("[data-session-cost-merge]") !== null, "the merge must attach when the data arrives after mount");
+disposeEmpty();
+assert.equal(emptyBar.querySelector("[data-session-cost-merge]"), null, "teardown must remove the late-attached merge");
+assert.equal(startStatsRowObserver(null, () => null)(), void 0, "a missing anchor must be a safe no-op");
 
 // ---- createConfigStore (settings-scope backed) ------------------------
 // The store wraps a bound settings scope; exercise it with a controllable

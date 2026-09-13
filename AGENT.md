@@ -21,11 +21,11 @@ DSH（DeepSeek Harness）web 插件：把「本会话费用估算 + DeepSeek 账
   - `conversation.composer.dock`（list slot，id `session-cost`，order 100）
   - `settings.plugin.item`（keyed slot，**key** `session-cost`；Host 必须 serve 该 namespace 卡片才渲染）
   - `findStatsRow()`：优先按 `data-composer-stats` 属性定位自带统计栏（0.1.5 `StatsPills`），文本 `N 轮 61 步` / `N turns 61 steps` 仅作旧版回退（非锚定正则）
-  - `startStatsRowObserver(anchor, writeMerge)`：合并段的挂载与重挂载唯一入口。**统计栏会迟到**（`StatsPills` 在会话有步骤/token 前返回 `null`），所以 MutationObserver 必须监听锚点 parent 的**子树**（`childList`+`characterData`+`subtree`）；只监听容器 `childList` 会导致统计栏出现时永不回调 → 费用段静默消失（0.1.5 的实际故障模式）
+  - `startStatsRowObserver(anchor, writeMerge)`：合并段的挂载与重挂载唯一入口。**两个"迟到"必须同时处理**：①**统计栏迟到**（`StatsPills` 在会话有步骤/token 前返回 `null`）→ 观察器必须监听锚点 parent 的**子树**（`childList`+`characterData`+`subtree`），只监听容器 `childList` 会在统计栏出现时永不回调；②**数据迟到**（重启 host 后首次 summary/余额仍在路上，而组件已挂载）→ 观察器**必须无条件安装**；曾在 `writeMerge()` 返回 null 时提前 return，导致没人等统计栏、只有页面刷新后才显示（0.1.5 的第二个故障模式）。无数据时 `sync()` 只是不画节点
   - `buildMergeNode()` / `updateMergeNode()`：pill 触发器 + 展开面板的全部 DOM。**形状不变时走原地 patch**（`sameMergeShape` → `updateMergeNode`），点击监听与**展开状态**在数据刷新时都不丢；形状变化（余额出现/消失、段报错）才重建，重建后由 React 的 `panelOpen` 状态重新展开。`patchText` 只写叶子 slot——label 是容器，写它的 `textContent` 会把 cost/balance 子节点整片抹掉
   - `disposeMergeNode()`：每个节点都持有一个挂到 `body` 的面板 + document 级监听（outside pointerdown / Escape），**discard 掉的候选节点也必须走它**，否则每次 sync 都往 `body` 漏一个面板
   - `placeOpenPanel()`：面板 placement 必须在节点**入 DOM 之后**才做（此前触发器没有盒子，会闪在视口原点）
-- `scripts/*.mjs` — 自包含 smoke（无框架依赖，mock DOM / mock settings scope）；`dom-smoke.mjs` 的 DOM 替身刻意保留**真实语义**（`textContent` 写入清空子节点、`querySelectorAll` 只搜后代、`getBoundingClientRect`/`replaceWith`/`removeAttribute`），并含 MutationObserver 替身，覆盖「统计栏迟到」「原地 patch 保留面板」「面板不泄漏」三类回归
+- `scripts/*.mjs` — 自包含 smoke（无框架依赖，mock DOM / mock settings scope）；`dom-smoke.mjs` 的 DOM 替身刻意保留**真实语义**（`textContent` 写入清空子节点、`querySelectorAll` 只搜后代、`getBoundingClientRect`/`replaceWith`/`removeAttribute`），并含 MutationObserver 替身，覆盖「统计栏迟到」「数据迟到（空状态仍装观察器）」「原地 patch 保留面板」「面板不泄漏」四类回归
 - `cordis.patch.yml` — bundle patch；`package.json` `dsh.bundle.patch` 指向它
 
 ## 兼容性（重要，改代码前必读）
