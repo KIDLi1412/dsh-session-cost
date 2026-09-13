@@ -638,6 +638,73 @@ faulted.dispose();
 assert.equal(faultBar.querySelector("[data-session-cost-merge]"), null, "teardown must remove the recovered merge");
 assert.equal(intervals.size, 0, "the faulting observer must clear its watchdog too");
 
+// ---- click-to-open is an IN-PLACE update, not a rebuild ------------------
+// The panel is portaled to document.body, so an in-place sync has to reach it
+// through the node→panel registry: `node.querySelector("[data-slot=panel]")` is
+// always null. While that lookup was in place every panel reading stayed frozen
+// and — once the merge node stopped being rebuilt on each data change — the
+// panel could not be opened at all ("点击展开失效").
+const clickHost = new El("div");
+root.appendChild(clickHost);
+const clickAnchor = new El("div");
+clickAnchor.setAttribute("data-session-cost-anchor", "");
+clickHost.appendChild(clickAnchor);
+const clickBar = new El("div");
+clickBar.setAttribute("data-composer-stats", "");
+clickHost.appendChild(clickBar);
+// The owner keeps ONE state object and refreshes its fields, exactly like the
+// component does (the node's handlers read it at click time).
+const clickState = mergeData();
+const clickObserver = startStatsRowObserver(clickAnchor, () => buildMergeNode(zhDict, clickState));
+const clickNode = clickBar.querySelector("[data-session-cost-merge]");
+const clickPanel = body.querySelectorAll("[data-slot=panel]").at(-1);
+const clickTrigger = clickNode.querySelector("[data-slot=trigger]");
+assert.equal(clickPanel.hidden, true, "the panel must start closed");
+// The click only flips the owner's state; the DOM follows on the next sync.
+clickTrigger.dispatchEvent(new EventStub("click"));
+clickState.open = true;
+clickObserver.sync();
+assert.equal(clickBar.querySelector("[data-session-cost-merge]"), clickNode, "opening must not rebuild the node");
+assert.equal(body.querySelectorAll("[data-slot=panel]").at(-1), clickPanel, "opening must not rebuild the panel");
+assert.equal(clickPanel.hidden, false, "the panel must open in place");
+assert.equal(clickPanel.style.visibility, "visible", "an opened panel must be placed above its trigger");
+assert.equal(clickTrigger.getAttribute("aria-expanded"), "true", "the trigger must advertise the open panel");
+// …and closing behaves the same way, without losing the elements.
+clickState.open = false;
+clickObserver.sync();
+assert.equal(body.querySelectorAll("[data-slot=panel]").at(-1), clickPanel, "closing must not rebuild the panel");
+assert.equal(clickPanel.hidden, true, "the panel must close in place");
+assert.equal(clickPanel.style.visibility, "hidden", "a closed panel must be hidden outright");
+assert.equal(clickTrigger.getAttribute("aria-expanded"), "false", "the trigger must advertise the closed panel");
+
+// The panel's own readings patch in place as well — they live in the portaled
+// panel, so a lookup on the merge node can never reach them.
+clickState.open = true;
+clickState.cost = 3.25;
+clickState.totalValue = 8.75;
+clickObserver.sync();
+assert.equal(body.querySelectorAll("[data-slot=panel]").at(-1), clickPanel, "the panel element must survive a data update");
+assert.equal(clickPanel.querySelector("[data-slot=title-value]").textContent, "¥3.25", "the panel total must patch in place");
+assert.ok(clickPanel.querySelector("[data-slot=panel-balance]").textContent.includes("¥8.75"), "the panel balance must patch in place");
+assert.ok(clickNode.querySelector("[data-slot=cost]").textContent.includes("¥3.25"), "the pill reading must patch in place");
+
+// Handlers are read at CLICK time from the owner's live state object: a node
+// that outlives renders must never keep calling the callback it was built with.
+const refreshCalls = [];
+clickState.onRefresh = () => refreshCalls.push("first");
+clickObserver.sync();
+clickPanel.querySelector("[data-slot=refresh]").dispatchEvent(new EventStub("click"));
+clickState.onRefresh = () => refreshCalls.push("second");
+clickObserver.sync();
+clickPanel.querySelector("[data-slot=refresh]").dispatchEvent(new EventStub("click"));
+assert.deepEqual(refreshCalls, ["first", "second"], "the refresh button must use the handler from the latest state");
+const panelsAfterClick = body.querySelectorAll("[data-slot=panel]").length;
+clickObserver.sync();
+assert.equal(body.querySelectorAll("[data-slot=panel]").length, panelsAfterClick, "an in-place sync must not leak a panel");
+clickObserver.dispose();
+assert.equal(clickPanel.parentElement, null, "teardown must remove the portaled panel");
+assert.equal(intervals.size, 0, "the click observer must clear its watchdog too");
+
 // ---- createConfigStore (settings-scope backed) ------------------------
 // The store wraps a bound settings scope; exercise it with a controllable
 // mock scope instead of a live one (the live scope needs the browser +
