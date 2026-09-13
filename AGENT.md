@@ -40,6 +40,13 @@ DSH（DeepSeek Harness）web 插件：把「本会话费用估算 + DeepSeek 账
   - `session.seq` + `session.eventAt(seq)`（0.1.2 起的读法）在 0.1.5 未变，`liveSessionEvents()` 双兼容读法继续有效
 - **DSH STORE 的 protectedDsh 信号是设计使然**（统计栏合并没有官方扩展点），README 已披露，保持现状，不要"修复"它
 
+## 定价（改 `lib/cost.js` 前必读）
+
+- 计价是**两层**：`periodOf(time)` 先判**价格世代**（`legacy` → `v4:peak`/`v4:offpeak` → 当前 `peak`/`offpeak`），再由 `peakStateOf(time)` 提供日内峰谷。V4 世代必须同时保留两个维度，否则 V4 时代的高峰流量会被按空闲价计（少算一半）
+- 世代表：`DEFAULT_PRICING`（2026-09-10 起，V4.1-Flash：Flash ¥1/2、¥0.02/0.04、¥4/8；Pro ¥4.5/9、¥0.15/0.30、¥13.5/27）、`V4_ERA_PRICING`（2026-08-17–09-09）、`LEGACY_PRICING`（之前的平峰价）。`PERIODS` 数组是 fold/计价共用的时段清单，加时段要同步 `zeroBuckets` 初始化、`periodsOf` 的 fallback 与 row 汇总
+- `priceOf` 按**名称边界前缀**匹配（`deepseek-v4-flash-2026-01` 命中 `deepseek-v4-flash`，`deepseek-v99` 不命中）；世代表用 `eraEntryOf` + `PRICING_ALIASES` 解析别名。**新增模型 id 时必须同步当前表与别名表**，否则费用静默变 ¥0（0.1.5 的 `deepseek-flash` 就是这么炸的）
+- 每次官方调价：更新 `DEFAULT_PRICING`、把上一代价目挪进新世代表并加 cutover 常量、同步 README 定价小节与 `scripts/smoke.mjs` 的用例
+
 ## 修改守则
 
 - 服务端读 session 事件**必须走 `liveSessionEvents()`**（不要直接碰 `session.events`）
