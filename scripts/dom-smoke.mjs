@@ -170,6 +170,11 @@ const documentListeners = new Map();
 const document = {
 	createElement: (tag) => new El(tag),
 	createElementNS: (_ns, tag) => new El(tag),
+	createTextNode: (text) => {
+		const node = new El("#text");
+		node.textContent = String(text);
+		return node;
+	},
 	querySelector: () => null,
 	head: new El("head"),
 	body,
@@ -325,7 +330,10 @@ assert.ok(trigger.querySelector("svg") !== null, "the trigger must lead with its
 const triggerText = trigger.textContent;
 assert.ok(triggerText.includes("费用 ¥0.4549"), `cost reading missing in "${triggerText}"`);
 assert.ok(triggerText.includes("余额 ¥6.43"), `balance reading missing in "${triggerText}"`);
-assert.equal(trigger.querySelector(".sco_mergeSep").textContent, "·", "the two readings must be joined by a middot");
+assert.equal(trigger.querySelector(".sco_mergeSep").textContent, "|", "the two labelled readings must be separated by a bar");
+// The values carry the pill tier's regular weight (no bold) and keep their
+// figures tabular, so they line up with the built-in readings.
+assert.equal(trigger.querySelectorAll("span.sco_mergeAmount").length, 2, "both amounts must carry the tabular figure span");
 assert.equal(node.querySelectorAll(".sco_mergeVal").length, 2, "cost and balance values must be separate elements");
 assert.equal(node.hasAttribute("title"), false, "the hover title must be gone (the panel replaced it)");
 
