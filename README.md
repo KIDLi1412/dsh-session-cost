@@ -74,12 +74,14 @@ dsh plugin --profile web remove @kidli1412/dsh-session-cost
 - **DSH**：manifest 通过 `dsh.compatibility.dshReleases` 将官方最新版本 `0.1.5-rc.1`、`0.1.5-rc.2` 逐项声明为 `compatible`（DSH STORE 的精确逐版本兼容证据；仅范围声明不会恢复上架）。插件使用的客户端注入（`dsh-api-remotes` / `dsh-client-connection` / `dsh-client-locale` / `dsh-client-ui-conversation` / `dsh-client-ui-settings`）与 Host 服务（`settings` namespace、`webServer` 精确路由、`session.seq` + `session.eventAt`）在 0.1.5 版本线上保持稳定。
 - **Node**：`^22.19.0 || >=24.0.0`（与 DSH 一致）。
 - **宿主要求（dsh-market 显示）**：`engines.dsh: ^0.1.5-rc.1`，并将运行时依赖的 lockstep 宿主包声明为 `peerDependencies`（`dsh-host-webserver` / `dsh-session` / `dsh-credentials` / `dsh-settings` 与客户端模块 `dsh-api-remotes` / `dsh-client-connection` / `dsh-client-locale` / `dsh-client-ui-conversation` / `dsh-client-ui-settings`，均为 `^0.1.5-rc.1`）；插件市场会据此显示"宿主要求"并判断与当前 DSH 是否匹配。
-- **0.1.10（DSH 0.1.5 适配）**：三处必须改动，否则统计栏里**完全看不到**费用/余额段——
+- **0.2.0（DSH 0.1.5 适配 + 交互重做）**：三处必须改动，否则统计栏里**完全看不到**费用/余额段——
   1. **不再 require `@deepseek-ai/dsh-client-ui-primitives`**。0.1.5 起该包不再随 DSH 安装（依赖树里已无此包，客户端模块图因此没有这一行），而 plugin bundle 的 `require()` 对**未注册模块是抛错**的（loader 的 loud 语义），一处 require 就会让**整个客户端 half 加载失败**：dock 锚点、合并段、设置卡片全部消失。本插件的图标改为内联 SVG 自绘，bundle 不再依赖任何可选宿主模块。
   2. **统计栏标记与定位**：优先按 `data-composer-stats` 属性定位（0.1.5 新增），文本 `N 轮 · M 步` 只作旧版回退且改为非锚定匹配（0.1.5 的 pill 文本已无 `·` 分隔）。
-  3. **统计栏会迟到**：`StatsPills` 在会话有步骤/token 前返回 `null`，锚点在、统计栏不在；此前只监听 dock 容器的 `childList`，统计栏挂载时容器自身不变、回调永不触发，合并就再也不会发生。现在改为监听容器的**子树**（`childList` + `characterData` + `subtree`）。
+  3. **两个"迟到"**：`StatsPills` 在会话有步骤/token 前返回 `null`（统计栏迟到），而重启 host 后首次 summary/余额响应仍在路上（数据迟到）。前者要求观察器监听容器**子树**（`childList` + `characterData` + `subtree`），后者要求观察器**无条件安装**——否则费用段要么永不出现，要么必须刷新页面才出现。
+  4. **价格与模型 id 同步跟进**：0.1.5 把 V4-Flash 路由成短 id `deepseek-flash`，且官方在 2026-09-10 发布 V4.1-Flash 并调价；本版引入**价格世代**模型（`legacy` / `v4:*` / 当前 `peak`/`offpeak`）与别名解析，详见下文「定价表」。
+  交互上，费用/余额段从"悬停气泡"改为**与自带统计项同款的可点击 pill + 点击展开面板**。
 - **0.1.8（DSH 0.1.2 适配）**：rc.1 起 live session 不再携带 `.events` 数组——事件总数读 `session.seq`、逐条读 `session.eventAt(seq)`（与官方 `dsh-token-meter` 相同的读法），费用折叠已适配；客户端注入模块列表同步为新架构模块（见上）。
-- **降级说明**：本版本已不再声明 `0.1.2-*` 兼容（0.1.10 起 `dshReleases` 只列 0.1.5 线）。需要 0.1.2 线的用户请使用 0.1.9。
+- **降级说明**：本版本已不再声明 `0.1.2-*` 兼容（0.2.0 起 `dshReleases` 只列 0.1.5 线）。需要 0.1.2 线的用户请使用 0.1.9。
 
 ## 架构
 
