@@ -334,10 +334,12 @@ assert.equal(trigger.querySelector(".sco_mergeSep").textContent, "·", "the two 
 // The values carry the pill tier's regular weight (no bold) and keep their
 // figures tabular, so they line up with the built-in readings.
 assert.equal(trigger.querySelectorAll("span.sco_mergeAmount").length, 2, "both amounts must carry the tabular figure span");
-// The leading glyph is a banknote, not a currency symbol: the label already
+// The leading glyph is a wallet, not a currency symbol: the label already
 // carries the unit, so the icon must say WHAT is counted instead of repeating it.
 const triggerIcon = trigger.querySelector("[data-slot=trigger-icon]");
-assert.equal(triggerIcon.querySelector("rect") !== null, true, "the trigger glyph must be the banknote outline");
+assert.equal(triggerIcon.querySelector("rect") !== null, true, "the trigger glyph must be the wallet outline");
+assert.equal(triggerIcon.querySelector("path") !== null, true, "the wallet needs its flap line");
+assert.equal(triggerIcon.querySelector("circle") !== null, true, "the wallet needs its clasp dot");
 assert.equal(triggerIcon.querySelector("text"), null, "the glyph must not spell a currency symbol");
 assert.equal(node.querySelectorAll(".sco_mergeVal").length, 2, "cost and balance values must be separate elements");
 assert.equal(node.hasAttribute("title"), false, "the hover title must be gone (the panel replaced it)");
