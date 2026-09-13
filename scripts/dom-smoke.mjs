@@ -200,6 +200,13 @@ class EventStub {
 	constructor(type) { this.type = type; }
 }
 
+/**
+ * The inline properties an element carries, sorted. Used to prove the plugin
+ * does NOT rewrite the built-in bar's layout: since DSH 0.1.5 the bar is a
+ * centered flex row that caps and clips nothing, so it must stay untouched.
+ */
+const inlineStyleProps = (el) => [...el.style._map.keys()].sort();
+
 // ---- load the client bundle ------------------------------------------
 let descriptor = null;
 // Timers: the stats-row observer arms a watchdog interval that repairs a merge
@@ -231,7 +238,7 @@ const requireStub = (id) => ({});
 const factory = descriptor.factory;
 const exportsObj = factory(requireStub);
 
-const { findStatsRow, startStatsRowObserver, buildMergeNode, createConfigStore, fmtCny, applyMergeRowStyles, restoreMergeRowStyles } = exportsObj;
+const { findStatsRow, startStatsRowObserver, buildMergeNode, createConfigStore, fmtCny } = exportsObj;
 const zhDict = (key) => ({
 	"cost": "费用", "balance": "余额", "费用": "费用", "余额": "余额", "刷新": "刷新", "刷新中…": "刷新中…",
 	"已更新 {time}": "已更新 {time}", "暂不可用": "暂不可用", "未配置 {ref}": "未配置 {ref}",
@@ -482,12 +489,16 @@ const appended = liveBar.querySelector("[data-session-cost-merge]");
 assert.ok(appended !== null, "bar appearing after mount must receive the merge");
 assert.equal(liveAnchor.getAttribute("data-solo"), null, "the anchor must hide again once the bar hosts the merge");
 assert.equal(liveAnchor.querySelector("[data-session-cost-merge]"), null, "the anchor must not keep a second copy");
-assert.equal(liveBar.style.getPropertyValue("max-width"), "none", "the bar must be widened for the appended row");
+// The bar's own layout is DSH's business. 0.1.5's `.bOPqQW_root` is a centered
+// flex row (width:100%, 748px cap, gap:12px) that clips nothing, so the merge
+// is simply a third item in that group — the plugin writes NO inline style
+// onto it (the ≤ 0.1.4 widening patch is gone; see the styled-bar case below).
+assert.deepEqual(inlineStyleProps(liveBar), [], "the plugin must not rewrite the built-in bar's layout");
 
-// Teardown removes the node, restores the inline styles and disconnects.
+// Teardown removes the node, leaves the bar untouched and disconnects.
 live.dispose();
 assert.equal(liveBar.querySelector("[data-session-cost-merge]"), null, "teardown must remove the merge node");
-assert.equal(liveBar.style.getPropertyValue("max-width"), "", "teardown must restore the bar's inline styles");
+assert.deepEqual(inlineStyleProps(liveBar), [], "teardown must leave the bar's inline styles as they were");
 assert.ok(observer.disconnected > 0, "teardown must disconnect the observer");
 const noAnchor = startStatsRowObserver(null, () => null);
 assert.equal(typeof noAnchor.dispose, "function", "a missing anchor must still hand back a handle");
@@ -525,7 +536,7 @@ barB.setAttribute("data-composer-stats", "");
 switchHost.appendChild(barB);
 switchObserver.fire();
 assert.ok(barB.querySelector("[data-session-cost-merge]") !== null, "the merge must follow the bar to its replacement");
-assert.equal(barB.style.getPropertyValue("max-width"), "none", "the replacement bar must be widened too");
+assert.deepEqual(inlineStyleProps(barB), [], "the replacement bar must be left untouched too");
 
 // The watchdog repairs anything the mutation stream could not report (a node
 // wiped while the observer was detached, a bar re-mounted with no observable
@@ -762,32 +773,34 @@ mock.publish({ status: "ready", value: { lowBalanceThreshold: 5 }, writable: tru
 assert.equal(notified, 1, "unsubscribed listener must not fire");
 store.dispose();
 
-// ---- merge-row styles (apply/restore round-trip) ----------------------
-// The built-in StatsLine root caps at 748px with overflow:hidden + ellipsis
-// (DSH rc.7+), clipping the appended merge node; applyMergeRowStyles widens +
-// unclips the row, restoreMergeRowStyles puts the prior inline values back.
+// ---- the built-in bar's own layout is never rewritten -----------------
+// Up to 0.2.2 the merge widened + unclipped the stats row with inline styles,
+// because the ≤ 0.1.4 `StatsLine` root capped itself at 748px (also with
+// `overflow:hidden` + `text-overflow:ellipsis`) and clipped the appended tail.
+// 0.1.5's `.bOPqQW_root` is a centered flex row that caps and clips nothing, so
+// that patch is gone — and this case makes sure it STAYS gone: any inline write
+// on the bar (a reintroduced `max-width`, an `overflow` unclip, an ellipsis
+// clip) fails here, and a bar carrying an inline value of its own must still
+// hold exactly that value afterwards.
 const styledRow = new El("div");
+styledRow.setAttribute("data-composer-stats", "");
 styledRow.style.setProperty("max-width", "900px");
-styledRow.style.setProperty("overflow", "hidden");
-applyMergeRowStyles(styledRow);
-assert.equal(styledRow.style.getPropertyValue("max-width"), "none", "merge must widen the row");
-assert.equal(styledRow.style.getPropertyValue("overflow"), "visible", "merge must unclip the row");
-assert.equal(styledRow.style.getPropertyValue("text-overflow"), "clip", "merge must drop the ellipsis");
-applyMergeRowStyles(styledRow);
-assert.equal(styledRow.style.getPropertyValue("max-width"), "none", "re-apply must be idempotent");
-restoreMergeRowStyles(styledRow);
-assert.equal(styledRow.style.getPropertyValue("max-width"), "900px", "prior max-width must be restored");
-assert.equal(styledRow.style.getPropertyValue("overflow"), "hidden", "prior overflow must be restored");
-assert.equal(styledRow.style.getPropertyValue("text-overflow"), "", "absent text-overflow must be removed again");
-restoreMergeRowStyles(styledRow);
-assert.equal(styledRow.style.getPropertyValue("max-width"), "900px", "double restore must be a no-op");
-const untouchedRow = new El("div");
-restoreMergeRowStyles(untouchedRow);
-applyMergeRowStyles(untouchedRow);
-restoreMergeRowStyles(untouchedRow);
-assert.equal(untouchedRow.style.getPropertyValue("max-width"), "", "plain row must end untouched");
-assert.equal(untouchedRow.style.getPropertyValue("overflow"), "", "plain row must end untouched (overflow)");
-assert.equal(applyMergeRowStyles(null), void 0, "null row must be a safe no-op");
+const styledAnchor = new El("div");
+styledAnchor.setAttribute("data-session-cost-anchor", "");
+const styledHost = new El("div");
+root.appendChild(styledHost);
+styledHost.appendChild(styledRow);
+styledHost.appendChild(styledAnchor);
+const styledLive = startStatsRowObserver(styledAnchor, () => buildMergeNode(zhDict, mergeData()));
+assert.ok(styledRow.querySelector("[data-session-cost-merge]") !== null, "the merge must attach to that bar");
+assert.deepEqual(inlineStyleProps(styledRow), ["max-width"], "the bar's own inline styles must survive the merge");
+assert.equal(styledRow.style.getPropertyValue("max-width"), "900px", "the bar's own max-width must not be overwritten");
+assert.equal(styledRow.style.getPropertyValue("overflow"), "", "no overflow unclip may be written");
+assert.equal(styledRow.style.getPropertyValue("text-overflow"), "", "no ellipsis clip may be written");
+styledLive.sync();
+assert.deepEqual(inlineStyleProps(styledRow), ["max-width"], "a re-sync must not add styles either");
+styledLive.dispose();
+assert.deepEqual(inlineStyleProps(styledRow), ["max-width"], "teardown must leave the bar exactly as DSH set it");
 
 // ---- fmtCny -----------------------------------------------------------
 assert.equal(fmtCny("7.09", 2), "7.09", "numeric string should format");
