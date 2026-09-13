@@ -220,7 +220,7 @@ const zhDict = (key) => ({
 	"tooltipInput": "输入", "tooltipOutput": "输出", "tooltipTokens": "tokens",
 	"tooltipPeak": "peak", "tooltipOffpeak": "offpeak", "tooltipLegacy": "legacy",
 	"tooltipToppedUp": "充值余额", "tooltipGranted": "赠送余额", "tooltipUpdated": "更新于 {time}",
-	"tooltipPricingNote": "note", "tooltipNoModels": "暂无 token 用量"
+	"tooltipPricingNote": "note", "tooltipNoModels": "暂无 token 用量", "unpriced": "未计价"
 }[key] ?? key);
 
 // ---- findStatsRow -----------------------------------------------------
@@ -281,8 +281,8 @@ assert.equal(findStatsRow(new El("div")), null, "empty container should return n
 const mergeData = (over = {}) => ({
 	cost: 0.4549,
 	models: [
-		{ model: "deepseek-official/deepseek-v4-flash", inputTokens: 169013, outputTokens: 46512, cost: 0.4549 },
-		{ model: "deepseek-official/deepseek-v4-pro", inputTokens: 1000, outputTokens: 500, cost: 0.02, peakCost: 0.01, offpeakCost: 0.01 }
+		{ model: "deepseek-official/deepseek-v4-flash", inputTokens: 169013, outputTokens: 46512, cost: 0.4549, price: { input: 1.5, cacheRead: 0.05, cacheWrite: 1.5, output: 4.5 } },
+		{ model: "deepseek-official/deepseek-v4-pro", inputTokens: 1000, outputTokens: 500, cost: 0.02, price: { input: 4.5 }, peakCost: 0.01, offpeakCost: 0.01 }
 	],
 	balance: { total: 6.43, toppedUp: 6.43, granted: 0 },
 	totalValue: 6.43,
@@ -342,6 +342,13 @@ assert.ok(modelValue.includes("输入 169,013") && modelValue.includes("¥0.4549
 // A model that billed two periods appends the 峰谷 split.
 const splitValue = panel.querySelectorAll("[data-slot=row-value]")[1].textContent;
 assert.ok(splitValue.includes("peak ¥0.01") && splitValue.includes("offpeak ¥0.01"), `billing split missing: "${splitValue}"`);
+// A model with no pricing entry is flagged instead of reading as free.
+const unpricedNode = built(zhDict, mergeData({
+	models: [{ model: "deepseek-official/deepseek-v99", inputTokens: 10, outputTokens: 5, cost: 0, price: null }]
+}));
+const unpricedRow = nodePanel(unpricedNode).querySelector("[data-slot=row-value]");
+assert.ok(unpricedRow.textContent.includes("未计价"), `an unpriced model must be flagged: "${unpricedRow.textContent}"`);
+assert.equal(unpricedRow.getAttribute("data-warn"), "true", "the unpriced flag must be a warning");
 assert.equal(panel.querySelector("[data-slot=panel-balance]").textContent, "¥6.43", "panel balance missing");
 assert.ok(panel.querySelector("[data-slot=panel-note]").textContent.length > 0, "the pricing note must be shown");
 const refresh = panel.querySelector("[data-slot=refresh]");

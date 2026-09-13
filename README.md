@@ -98,14 +98,21 @@ dsh plugin --profile web remove @kidli1412/dsh-session-cost
 | 模型 | 输入（缓存未命中）空闲 / 高峰 | 输入（缓存命中）空闲 / 高峰 | 输出 空闲 / 高峰 |
 | --- | --- | --- | --- |
 | deepseek-v4-flash | ¥1.5 / ¥3.0 | ¥0.05 / ¥0.10 | ¥4.5 / ¥9.0 |
+| deepseek-flash（0.1.5 的同一模型短 id） | ¥1.5 / ¥3.0 | ¥0.05 / ¥0.10 | ¥4.5 / ¥9.0 |
+| deepseek-v41-flash（同上，另一种拼写） | ¥1.5 / ¥3.0 | ¥0.05 / ¥0.10 | ¥4.5 / ¥9.0 |
 | deepseek-v4-flash-vision-exp | ¥1.5 / ¥3.0 | ¥0.05 / ¥0.10 | ¥4.5 / ¥9.0 |
 | deepseek-v4-pro | ¥4.5 / ¥9.0 | ¥0.15 / ¥0.30 | ¥13.5 / ¥27.0 |
 | deepseek-chat（V3 遗留，默认） | ¥2（平峰） | ¥0.5 | ¥3 |
 | deepseek-reasoner（V3 遗留，默认） | ¥4（平峰） | ¥1 | ¥16 |
 
+> **模型 id 会变，变了就会静默算成 ¥0**：DSH 0.1.5 把 V4-Flash 路由成短 id `deepseek-flash`（界面上显示 "DeepSeek-V41-Flash"），而旧表里只有 `deepseek-v4-flash` —— 找不到单价 → 整场会话费用恒为 0，这正是 0.1.5 升级后的"费用一直是 0"。因此本版：
+> - 同时保留 `deepseek-v4-flash` / `deepseek-flash` / `deepseek-v41-flash` 三个 id；
+> - 匹配改为**名称边界前缀**：`deepseek-v4-flash-2026-01` 这类带日期后缀的 id 归到 `deepseek-v4-flash`，而 `deepseek-v99` 这种不同型号**不会**被误当成 flash，而是判为未计价；
+> - 明细面板里未匹配到单价的模型显示红色 **未计价**，不再伪装成 ¥0；`GET /api/session-cost/summary` 也附带 `diagnostics`（事件数 / 已识别模型 / 已计价模型数），便于排查。
+
 `cacheWrite` 无 DeepSeek 等价项（上下文缓存自动命中计费），默认按缓存未命中输入价计（分时段），避免低估。V3 遗留模型未列入官方页面，保持最后已知的平峰价。
 
-悬停明细会显示高峰 / 空闲 / 旧价的费用拆分（跨多个时段时）。
+明细面板会显示高峰 / 空闲 / 旧价的费用拆分（跨多个时段时）。
 
 插件配置（可选）可覆盖定价——平峰格式（所有时段同价）或分时段格式：
 

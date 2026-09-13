@@ -139,6 +139,33 @@ assert.equal(legacyRow.legacyTokens, 2000, "pre-cutover sample lands in legacy b
 assert.ok(Math.abs(legacyRow.cost - (1000 * 1 + 1000 * 2) / 1e6) < 1e-9, "legacy flash cost uses the old flat rates");
 assert.ok(Math.abs(LEGACY_PRICING["deepseek-v4-flash"].input - 1) < 1e-9, "legacy flash input rate is ¥1");
 
+// Model-id aliases: DSH 0.1.5 routes V4-Flash as `deepseek-flash` (the id the
+// session log actually carries), so the pricing table must resolve it — an
+// unresolved id prices every row at 0 and the whole feature silently reads ¥0.
+const aliasSample = {
+	seq: 200,
+	time: Date.UTC(2026, 8, 13, 12, 0, 0), // Sunday → off-peak all day
+	type: "assistant/message",
+	data: {
+		turn: 20,
+		step: 1,
+		message: { source: { provider: "deepseek-official", model: "deepseek-flash" } },
+		usage: { inputTokens: 11983, outputTokens: 114, cacheReadTokens: 3712 }
+	}
+};
+const aliasFold = foldCost([aliasSample]);
+const aliasRow = aliasFold.models[0];
+assert.equal(aliasRow.model, "deepseek-official/deepseek-flash");
+assert.notEqual(aliasRow.price, null, "the 0.1.5 short model id must resolve a pricing entry");
+assert.ok(aliasFold.cost > 0, `an aliased model must cost something, got ${aliasFold.cost}`);
+const expectedAlias = (11983 * 1.5 + 3712 * 0.05 + 114 * 4.5) / 1e6;
+assert.ok(Math.abs(aliasFold.cost - expectedAlias) < 1e-9, `aliased flash must bill at the V4-Flash rates (${aliasFold.cost} vs ${expectedAlias})`);
+// The specific v4 ids keep their own entries (longest key wins).
+assert.equal(priceOf("deepseek-official/deepseek-v4-flash").key, "deepseek-v4-flash");
+assert.equal(priceOf("deepseek-official/deepseek-v41-flash").key, "deepseek-v41-flash");
+assert.equal(priceOf("deepseek-official/deepseek-flash").key, "deepseek-flash");
+assert.equal(priceOf("deepseek-official/deepseek-v99"), null, "an unknown model still resolves nothing");
+
 // periodsOf: flat entries apply to every period; per-period entries keep the
 // legacy fallback separate.
 const flat = periodsOf({ input: 1, cacheRead: 0.02, cacheWrite: 1, output: 2 }, LEGACY_PRICING["deepseek-v4-flash"]);
