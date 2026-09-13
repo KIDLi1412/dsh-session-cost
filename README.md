@@ -1,6 +1,6 @@
 # dsh-session-cost
 
-DSH（DeepSeek Harness）Web 插件：把**本次会话的 Token 费用估算**与 **DeepSeek API 余额**并入输入框下方的**自带统计行**。
+DSH（DeepSeek Harness）Web 插件：把**本次会话的 Token 费用估算**与 **DeepSeek API 余额**并入输入框下方的**自带统计栏**。
 
 - 费用估算：服务端按**模型逐条计价**——从会话事件日志折叠出每个模型的输入/输出/缓存命中 token（语义与 `dsh-token-meter` 的 `tokenUsage` 投影一致），再按 CNY 单价表（`lib/cost.js`）计算费用，混合多模型的会话也精确。
 - 余额查询：复用官方余额接口 `GET {baseURL}/user/balance`（参考插件 [dsh-usage-stats](https://github.com/Ychris12138/dsh-usage-stats) 的余额方案），凭据经 DSH 的 credentials 缝解析，2 分钟内存缓存 + 单飞防抖；`?refresh=1` 可强制绕过缓存（状态栏的 ⟳ 手动刷新即用此参数）。
@@ -8,9 +8,13 @@ DSH（DeepSeek Harness）Web 插件：把**本次会话的 Token 费用估算**�
 
 ## 界面
 
-费用/余额段**追加到自带统计行同一行**，与轮次/时长/token 统计并列（会话尚无统计内容时暂不显示）。DSH rc.7 起自带统计行有 748px 宽度上限 + 省略号截断，会把追加的费用/余额段裁掉；本插件会**自动把统计行放宽到容器全宽并取消裁剪**（效果同 zh_pro「统计全显示」，但不依赖它），因此无需安装 zh_pro 也能完整显示：
+费用/余额段**追加到自带统计栏同一行**，与轮次/时长/token 各项读数并列（会话尚无统计内容时暂不显示）：
 
 ![并入统计栏](docs/并入统计栏.jpg)
+
+- DSH 0.1.5 起自带统计栏改为 **`StatsPills`**：居中的 flex 行、由带图标的 pill 组成（`data-composer-stats` 标记），取代了此前单行省略号文本的 `StatsLine`。本插件的费用段因此按同一套 13/20 字号层级、同一 12px 行内间距渲染，自带 ¥ 图标，视觉上与自带 pill 齐平。
+- **自带统计栏会"迟到"**：`StatsPills` 在会话有步骤或 token 之前返回 `null`（整行都不存在），所以插件必须能在统计栏**之后**挂载的情况下仍然接上去——见下文「实现要点」。
+- ≤ 0.1.4 的自带统计行有 748px 宽度上限 + 省略号截断，会把追加的费用/余额段裁掉；本插件会**自动把统计行放宽到容器全宽并取消裁剪**（效果同 zh_pro「统计全显示」，但不依赖它），因此无需安装 zh_pro 也能完整显示。
 
 设置项（**设置 → 插件 → 插件配置 → 会话费用显示**，经 `session-cost` settings namespace 持久化到 `~/.dsh/settings.yaml`，即时生效；0.1.1 及更早版本的 localStorage 配置会在首次加载时自动迁移）：
 
@@ -60,11 +64,15 @@ dsh plugin --profile web remove @kidli1412/dsh-session-cost
 
 ## 兼容性 / Compatibility
 
-- **DSH**：manifest 通过 `dsh.compatibility.dshReleases` 将官方最新三个版本 `0.1.2-alpha.4`、`0.1.2-alpha.5`、`0.1.2-rc.1` 逐项声明为 `compatible`（DSH STORE 的精确逐版本兼容证据；仅范围声明不会恢复上架）。插件使用的客户端注入（`dsh-api-remotes` / `dsh-client-connection` / `dsh-client-locale` / `dsh-client-ui-conversation` / `dsh-client-ui-settings`）与 Host 服务（`settings` namespace、`webServer` 精确路由）在这条版本线上保持稳定。
+- **DSH**：manifest 通过 `dsh.compatibility.dshReleases` 将官方最新版本 `0.1.5-rc.1`、`0.1.5-rc.2` 逐项声明为 `compatible`（DSH STORE 的精确逐版本兼容证据；仅范围声明不会恢复上架）。插件使用的客户端注入（`dsh-api-remotes` / `dsh-client-connection` / `dsh-client-locale` / `dsh-client-ui-conversation` / `dsh-client-ui-settings`）与 Host 服务（`settings` namespace、`webServer` 精确路由、`session.seq` + `session.eventAt`）在 0.1.5 版本线上保持稳定。
 - **Node**：`^22.19.0 || >=24.0.0`（与 DSH 一致）。
-- **宿主要求（dsh-market 显示）**：`engines.dsh: ^0.1.2-rc.1`，并将运行时依赖的 lockstep 宿主包声明为 `peerDependencies`（`dsh-host-webserver` / `dsh-session` / `dsh-credentials` / `dsh-settings` 与客户端模块 `dsh-api-remotes` / `dsh-client-connection` / `dsh-client-locale` / `dsh-client-ui-conversation` / `dsh-client-ui-settings` / `dsh-client-ui-primitives`，均为 `^0.1.2-rc.1`）；插件市场会据此显示"宿主要求"并判断与当前 DSH 是否匹配。
-- **依赖**：`@deepseek-ai/dsh-settings` 自 0.1.7 起提升为 `^0.1.2-rc.1`、`@deepseek-ai/schemastery` 提升为 `^3.18.2`，与 DSH 0.1.2 版本线对齐。npm 的 prerelease 解析规则下 `^0.1.0-rc.7` 不会解析到 `0.1.2-rc.1`（只会装 `0.1.0-rc.8`），因此较低的范围会拉到与新版 DSH 不同 train 的 settings 副本。
+- **宿主要求（dsh-market 显示）**：`engines.dsh: ^0.1.5-rc.1`，并将运行时依赖的 lockstep 宿主包声明为 `peerDependencies`（`dsh-host-webserver` / `dsh-session` / `dsh-credentials` / `dsh-settings` 与客户端模块 `dsh-api-remotes` / `dsh-client-connection` / `dsh-client-locale` / `dsh-client-ui-conversation` / `dsh-client-ui-settings`，均为 `^0.1.5-rc.1`）；插件市场会据此显示"宿主要求"并判断与当前 DSH 是否匹配。
+- **0.1.10（DSH 0.1.5 适配）**：三处必须改动，否则统计栏里**完全看不到**费用/余额段——
+  1. **不再 require `@deepseek-ai/dsh-client-ui-primitives`**。0.1.5 起该包不再随 DSH 安装（依赖树里已无此包，客户端模块图因此没有这一行），而 plugin bundle 的 `require()` 对**未注册模块是抛错**的（loader 的 loud 语义），一处 require 就会让**整个客户端 half 加载失败**：dock 锚点、合并段、设置卡片全部消失。本插件的图标改为内联 SVG 自绘，bundle 不再依赖任何可选宿主模块。
+  2. **统计栏标记与定位**：优先按 `data-composer-stats` 属性定位（0.1.5 新增），文本 `N 轮 · M 步` 只作旧版回退且改为非锚定匹配（0.1.5 的 pill 文本已无 `·` 分隔）。
+  3. **统计栏会迟到**：`StatsPills` 在会话有步骤/token 前返回 `null`，锚点在、统计栏不在；此前只监听 dock 容器的 `childList`，统计栏挂载时容器自身不变、回调永不触发，合并就再也不会发生。现在改为监听容器的**子树**（`childList` + `characterData` + `subtree`）。
 - **0.1.8（DSH 0.1.2 适配）**：rc.1 起 live session 不再携带 `.events` 数组——事件总数读 `session.seq`、逐条读 `session.eventAt(seq)`（与官方 `dsh-token-meter` 相同的读法），费用折叠已适配；客户端注入模块列表同步为新架构模块（见上）。
+- **降级说明**：本版本已不再声明 `0.1.2-*` 兼容（0.1.10 起 `dshReleases` 只列 0.1.5 线）。需要 0.1.2 线的用户请使用 0.1.9。
 
 ## 架构
 
@@ -73,7 +81,7 @@ dsh plugin --profile web remove @kidli1412/dsh-session-cost
 | `lib/index.js` | 服务端：`GET /api/session-cost/summary?session=<id>`（增量折叠会话事件并按模型计价）、`GET /api/session-cost/balance`（DeepSeek 余额，loopback-only 精确路由，`?refresh=1` 强制绕过缓存）；注册 `session-cost` settings namespace（`lowBalanceThreshold`，供配置卡读写） |
 | `lib/cost.js` | 纯函数：按模型 token 折叠（replace-last-sample 语义）+ CNY 单价表 + 费用计算 |
 | `lib/balance.js` | 纯函数：DeepSeek 余额接口查询与状态归一化 |
-| `lib/client.js` | 浏览器端：`conversation.composer.dock` 槽位（id `session-cost`, order 100）+ `settings.plugin.item` 设置卡片（key `session-cost`）；把费用/余额段追加进自带统计行 DOM（MutationObserver 在 React 重渲染后重新挂载），并放宽统计行宽度/取消裁剪让追加段可见（DSH rc.7 起 748px 上限 + ellipsis 会裁掉行尾，详见上文） |
+| `lib/client.js` | 浏览器端：`conversation.composer.dock` 槽位（id `session-cost`, order 100）+ `settings.plugin.item` 设置卡片（key `session-cost`）；把费用/余额段追加进自带统计栏 DOM（`startStatsRowObserver`：子树 MutationObserver，统计栏迟到/被 React 重渲染后都会重新挂载），并放宽统计栏宽度/取消裁剪让追加段可见（详见上文） |
 
 费用为**估算值**：token 用量来自会话日志中 provider 上报的 usage 样本，单价表为写死的默认值，价格变动后请更新 `lib/cost.js` 的 `DEFAULT_PRICING`（或通过插件配置 `pricing` 覆盖）。
 
