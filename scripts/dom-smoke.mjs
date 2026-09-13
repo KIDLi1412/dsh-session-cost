@@ -202,11 +202,25 @@ class EventStub {
 
 // ---- load the client bundle ------------------------------------------
 let descriptor = null;
+// Timers: the stats-row observer arms a watchdog interval that repairs a merge
+// the mutation stream could not report. The stub records the callbacks so the
+// test can tick them by hand instead of waiting on wall-clock time.
+const intervals = new Map();
+let intervalSeq = 0;
+function tickIntervals() {
+	for (const entry of [...intervals.values()]) entry.fn();
+}
 globalThis.window = {
 	__ModuleLoader__: { load: (m) => { descriptor = m; } },
 	addEventListener: () => {},
 	innerWidth: 1280,
-	innerHeight: 800
+	innerHeight: 800,
+	setInterval: (fn, ms) => {
+		intervalSeq += 1;
+		intervals.set(intervalSeq, { fn, ms });
+		return intervalSeq;
+	},
+	clearInterval: (id) => { intervals.delete(id); }
 };
 globalThis.document = document;
 globalThis.MutationObserver = MutationObserverStub;
@@ -379,6 +393,22 @@ assert.ok(warnVal.textContent.includes("¥6.43"), "the warn element must be the 
 const noWarn = buildMergeNode(zhDict, mergeData({ lowBalanceThreshold: 5 }));
 assert.equal(noWarn.querySelector("[data-slot=balance][data-warn=true]"), null, "balance above threshold must not be marked warn");
 
+// A summary that has not landed yet (a restart, or a session with no priced
+// usage sample yet) reads as an em dash — never a `¥—` that looks like a broken
+// number. This state is now visible on its own, because the pill also renders
+// while DSH's own stats bar does not exist yet. It is also the state that used
+// to CRASH the merge: `rowElement` hands back a dt/dd pair, and appending the
+// array itself throws in a real DOM (`appendChild` takes a node).
+const pendingCost = built(zhDict, mergeData({ cost: null, models: [] }));
+assert.equal(pendingCost.querySelector("[data-slot=cost]").textContent, "费用 —", "an unknown cost must not print a currency symbol");
+const pendingPanel = nodePanel(pendingCost);
+assert.equal(pendingPanel.querySelector("[data-slot=title-value]").textContent, "—", "the panel title must show a bare dash for an unknown cost");
+const pendingRows = pendingPanel.querySelectorAll("[data-slot=row-label]");
+assert.ok(pendingRows.some((row) => row.textContent === "暂无 token 用量"), "a session with no usage sample must say so in the panel");
+// Every child of the panel is an element: no array (or other non-node) ever
+// reaches `appendChild`.
+for (const child of pendingPanel.children) assert.equal(child.nodeType, 1, "the panel must only ever contain elements");
+
 // An open panel keeps its open flag on the node; its OWNER places it once the
 // node is in the DOM (`startStatsRowObserver` calls placeOpenPanel), so a
 // freshly built node is correctly not placed yet.
@@ -432,14 +462,13 @@ liveBar.setAttribute("data-composer-stats", "");
 const livePill = new El("span");
 livePill.textContent = "2 轮 61 步";
 liveBar.appendChild(livePill);
-const mergeCalls = [];
-const disposeObserver = startStatsRowObserver(liveAnchor, () => {
-	mergeCalls.push(Date.now());
-	return buildMergeNode(zhDict, mergeData());
-});
-// Nothing to build against yet: no bar, so no candidate is even asked for. The
-// observer is installed anyway — that is the point of this regression.
-assert.equal(mergeCalls.length, 0, "no bar yet means no merge candidate is built");
+const live = startStatsRowObserver(liveAnchor, () => buildMergeNode(zhDict, mergeData()));
+// No bar yet, so the reading is hosted by the anchor itself (with the bar's own
+// metrics) instead of being dropped with the bar it used to live in — this is
+// what a cold session shows for the second before `StatsPills` renders.
+assert.equal(liveBar.querySelector("[data-session-cost-merge]"), null, "no bar yet means nothing inside the bar");
+assert.ok(liveAnchor.querySelector("[data-session-cost-merge]") !== null, "the merge must fall back to the anchor while no bar exists");
+assert.equal(liveAnchor.getAttribute("data-solo"), "true", "the anchor must switch to its standalone layout");
 assert.ok(MutationObserverStub.instances.length > 0, "the observer must be installed before any data exists");
 
 // The bar mounts later, exactly like StatsPills flipping from null to a bar.
@@ -451,20 +480,73 @@ assert.equal(observer.options[0].childList, true, "the observer must watch child
 observer.fire();
 const appended = liveBar.querySelector("[data-session-cost-merge]");
 assert.ok(appended !== null, "bar appearing after mount must receive the merge");
+assert.equal(liveAnchor.getAttribute("data-solo"), null, "the anchor must hide again once the bar hosts the merge");
+assert.equal(liveAnchor.querySelector("[data-session-cost-merge]"), null, "the anchor must not keep a second copy");
 assert.equal(liveBar.style.getPropertyValue("max-width"), "none", "the bar must be widened for the appended row");
 
 // Teardown removes the node, restores the inline styles and disconnects.
-disposeObserver();
+live.dispose();
 assert.equal(liveBar.querySelector("[data-session-cost-merge]"), null, "teardown must remove the merge node");
 assert.equal(liveBar.style.getPropertyValue("max-width"), "", "teardown must restore the bar's inline styles");
 assert.ok(observer.disconnected > 0, "teardown must disconnect the observer");
-assert.equal(startStatsRowObserver(null, () => null)(), void 0, "a missing anchor must be a safe no-op");
+const noAnchor = startStatsRowObserver(null, () => null);
+assert.equal(typeof noAnchor.dispose, "function", "a missing anchor must still hand back a handle");
+noAnchor.sync();
+noAnchor.dispose();
+
+// ---- a COLD session switch must not disarm the observer ---------------
+// Opening a session with no warm client cache takes about a second: React tears
+// the old composer down and mounts the new one, so a mutation callback
+// legitimately runs while the anchor sits in a DETACHED subtree. Re-observing
+// only a CONNECTED host (the earlier guard) left the observer disconnected for
+// the rest of the component's life — the reading stayed gone until a page
+// reload mounted a fresh observer, which is exactly the reported bug.
+const switchHost = new El("div");
+root.appendChild(switchHost);
+const switchAnchor = new El("div");
+switchAnchor.setAttribute("data-session-cost-anchor", "");
+switchHost.appendChild(switchAnchor);
+const barA = new El("div");
+barA.setAttribute("data-composer-stats", "");
+switchHost.appendChild(barA);
+const switched = startStatsRowObserver(switchAnchor, () => buildMergeNode(zhDict, mergeData()));
+const switchObserver = MutationObserverStub.instances.at(-1);
+assert.ok(barA.querySelector("[data-session-cost-merge]") !== null, "the merge must start inside the bar");
+// The old panel goes away and a mutation is delivered while it is detached.
+switchHost.remove();
+switchObserver.fire();
+assert.ok(switchObserver.targets.length > 0, "the observer must stay armed while the panel is detached");
+assert.ok(barA.querySelector("[data-session-cost-merge]") !== null, "a detached sync must keep the merge in its bar");
+// The new panel arrives: the container is back with a freshly mounted bar.
+root.appendChild(switchHost);
+barA.remove();
+const barB = new El("div");
+barB.setAttribute("data-composer-stats", "");
+switchHost.appendChild(barB);
+switchObserver.fire();
+assert.ok(barB.querySelector("[data-session-cost-merge]") !== null, "the merge must follow the bar to its replacement");
+assert.equal(barB.style.getPropertyValue("max-width"), "none", "the replacement bar must be widened too");
+
+// The watchdog repairs anything the mutation stream could not report (a node
+// wiped while the observer was detached, a bar re-mounted with no observable
+// mutation, an anchor moved elsewhere): no page reload may be needed.
+const repaired = barB.querySelector("[data-session-cost-merge]");
+repaired.remove();
+assert.equal(barB.querySelector("[data-session-cost-merge]"), null, "the node must be gone before the watchdog runs");
+tickIntervals();
+assert.ok(barB.querySelector("[data-session-cost-merge]") !== null, "the watchdog must re-attach a lost merge");
+const intervalsBefore = intervals.size;
+switched.dispose();
+assert.equal(barB.querySelector("[data-session-cost-merge]"), null, "teardown must remove the repaired merge");
+assert.equal(intervals.size, intervalsBefore - 1, "teardown must clear the watchdog");
+tickIntervals();
+assert.equal(barB.querySelector("[data-session-cost-merge]"), null, "a disposed observer must not resurrect the merge");
 
 // A data change patches values in place: same node, same trigger (listener
 // intact, panel open) with the new readings. The shape stays identical here —
 // the same segments are present — which is exactly when patching applies.
 let liveState = mergeData({ open: true });
-const disposePatched = startStatsRowObserver(liveAnchor, () => buildMergeNode(zhDict, liveState));
+const patched2 = startStatsRowObserver(liveAnchor, () => buildMergeNode(zhDict, liveState));
 const patched = liveBar.querySelector("[data-session-cost-merge]");
 const patchedTrigger = patched.querySelector("[data-slot=trigger]");
 const patchedPanel = body.querySelectorAll("[data-slot=panel]").at(-1);
@@ -472,7 +554,7 @@ assert.equal(patchedPanel.hidden, false, "an open panel must survive the mount")
 assert.equal(patchedPanel.style.visibility, "visible", "the mounted panel must be placed");
 assert.equal(patchedPanel.style.top, "132px", "the mounted panel must sit above its trigger");
 liveState = mergeData({ open: true, cost: 1.5, totalValue: 2.5 });
-MutationObserverStub.instances.at(-1).fire();
+patched2.sync();
 const afterPatch = liveBar.querySelector("[data-session-cost-merge]");
 assert.equal(afterPatch, patched, "an update must patch the node, not replace it");
 assert.equal(afterPatch.querySelector("[data-slot=trigger]"), patchedTrigger, "the trigger element must be preserved");
@@ -485,7 +567,7 @@ assert.equal(patchedPanel.hidden, false, "the patch must not close an open panel
 const panelsInBody = body.querySelectorAll("[data-slot=panel]").length;
 MutationObserverStub.instances.at(-1).fire();
 assert.equal(body.querySelectorAll("[data-slot=panel]").length, panelsInBody, "a sync must not leak a panel");
-disposePatched();
+patched2.dispose();
 assert.equal(patchedPanel.parentElement, null, "teardown must remove the portaled panel");
 
 // The DATA, not just the bar, can arrive late: on a freshly started host the
@@ -506,13 +588,55 @@ const observerCount = MutationObserverStub.instances.length;
 const disposeEmpty = startStatsRowObserver(emptyAnchor, () => (payload === null ? null : buildMergeNode(zhDict, payload)));
 assert.equal(MutationObserverStub.instances.length, observerCount + 1, "an empty merge state must still install an observer");
 assert.equal(emptyBar.querySelector("[data-session-cost-merge]"), null, "no data yet means no merge node");
-// The payload arrives; the next mutation must attach the merge.
+assert.equal(emptyAnchor.querySelector("[data-session-cost-merge]"), null, "no data yet means no standalone node either");
+// While there is nothing to show, the watchdog must not invent a node.
+tickIntervals();
+assert.equal(emptyBar.querySelector("[data-session-cost-merge]"), null, "the watchdog must not build a node without data");
+// The payload arrives; the push from the owner must attach the merge.
 payload = mergeData();
-MutationObserverStub.instances.at(-1).fire();
+disposeEmpty.sync();
 assert.ok(emptyBar.querySelector("[data-session-cost-merge]") !== null, "the merge must attach when the data arrives after mount");
-disposeEmpty();
+disposeEmpty.dispose();
 assert.equal(emptyBar.querySelector("[data-session-cost-merge]"), null, "teardown must remove the late-attached merge");
-assert.equal(startStatsRowObserver(null, () => null)(), void 0, "a missing anchor must be a safe no-op");
+const noAnchor2 = startStatsRowObserver(null, () => null);
+assert.equal(typeof noAnchor2.sync, "function", "a missing anchor must still hand back a handle");
+noAnchor2.dispose();
+assert.equal(intervals.size, 0, "every observer must clear its watchdog on teardown");
+
+// ---- a throwing merge must never escape ---------------------------------
+// `sync` runs inside a React effect (an uncaught error there unmounts the whole
+// app) and inside a MutationObserver callback, so a defect in the merge is
+// contained, reported to the console, and retried by the watchdog instead of
+// taking the harness down with it.
+const faultHost = new El("div");
+root.appendChild(faultHost);
+const faultAnchor = new El("div");
+faultAnchor.setAttribute("data-session-cost-anchor", "");
+faultHost.appendChild(faultAnchor);
+const faultBar = new El("div");
+faultBar.setAttribute("data-composer-stats", "");
+faultHost.appendChild(faultBar);
+let broken = true;
+const warnings = [];
+const realWarn = console.warn;
+console.warn = (...args) => { warnings.push(args); };
+let faulted;
+try {
+	faulted = startStatsRowObserver(faultAnchor, () => {
+		if (broken) throw new Error("boom");
+		return buildMergeNode(zhDict, mergeData());
+	});
+} finally {
+	console.warn = realWarn;
+}
+assert.equal(faultBar.querySelector("[data-session-cost-merge]"), null, "a throwing merge must leave the bar empty, not crash");
+assert.equal(warnings.length, 1, "a contained failure must be reported once");
+broken = false;
+faulted.sync();
+assert.ok(faultBar.querySelector("[data-session-cost-merge]") !== null, "the next sync must recover after a contained failure");
+faulted.dispose();
+assert.equal(faultBar.querySelector("[data-session-cost-merge]"), null, "teardown must remove the recovered merge");
+assert.equal(intervals.size, 0, "the faulting observer must clear its watchdog too");
 
 // ---- createConfigStore (settings-scope backed) ------------------------
 // The store wraps a bound settings scope; exercise it with a controllable

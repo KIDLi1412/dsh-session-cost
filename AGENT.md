@@ -21,11 +21,13 @@ DSH（DeepSeek Harness）web 插件：把「本会话费用估算 + DeepSeek 账
   - `conversation.composer.dock`（list slot，id `session-cost`，order 100）
   - `settings.plugin.item`（keyed slot，**key** `session-cost`；Host 必须 serve 该 namespace 卡片才渲染）
   - `findStatsRow()`：优先按 `data-composer-stats` 属性定位自带统计栏（0.1.5 `StatsPills`），文本 `N 轮 61 步` / `N turns 61 steps` 仅作旧版回退（非锚定正则）
-  - `startStatsRowObserver(anchor, writeMerge)`：合并段的挂载与重挂载唯一入口。**两个"迟到"必须同时处理**：①**统计栏迟到**（`StatsPills` 在会话有步骤/token 前返回 `null`）→ 观察器必须监听锚点 parent 的**子树**（`childList`+`characterData`+`subtree`），只监听容器 `childList` 会在统计栏出现时永不回调；②**数据迟到**（重启 host 后首次 summary/余额仍在路上，而组件已挂载）→ 观察器**必须无条件安装**；曾在 `writeMerge()` 返回 null 时提前 return，导致没人等统计栏、只有页面刷新后才显示（0.1.5 的第二个故障模式）。无数据时 `sync()` 只是不画节点
+  - `startStatsRowObserver(anchor, writeMerge)` → `{ sync, dispose }`：合并段的挂载与重挂载唯一入口，**每个组件挂载只装一次**，数据变化由 `sync()` 推入（不要在数据 effect 里重建观察器：那会每 30 秒拆掉重建节点、并且掩盖"观察器已死"的事实）。**三个"迟到/重建"必须同时处理**：①**统计栏迟到**（`StatsPills` 在会话有步骤/token 前返回 `null`）→ 观察器必须监听锚点 parent 的**子树**（`childList`+`characterData`+`subtree`），只监听容器 `childList` 会在统计栏出现时永不回调；②**数据迟到**（重启 host 后首次 summary/余额仍在路上，而组件已挂载）→ 观察器**必须无条件安装**（曾在 `writeMerge()` 返回 null 时提前 return，导致没人等统计栏、只有页面刷新后才显示）；③**宿主重建**（切会话时整个输入区被拆掉重建，冷会话要等约 1 秒，回调可能在锚点**脱离文档**时触发）→ 重新挂载必须**无条件**（`observer.observe(host, …)` 不要加 `host.isConnected` 判断；脱离文档的子树照样派发变更）。**0.2.0 的 bug 就是③**：一次脱离文档期间的回调让观察器永久失效 → "切到没缓存的旧会话费用消失、切回来也不恢复、必须刷新页面"。另配 1 秒看门狗（`MERGE_WATCHDOG_MS`）兜底：`rendered && (统计栏已脱离文档 || 节点不在宿主里)` 就 `sync()` 重挂。无数据时 `sync()` 只是不画节点
+  - 统计栏不存在时**不能什么都不画**：`sync()` 把节点挂到锚点自身并打 `data-solo="true"`（CSS 照抄 `.bOPqQW_root` 的字号/内边距/最大宽度），统计栏出现即 `drop(anchor)` 挪回栏内。否则全新会话/冷会话加载中完全没有费用读数
+  - 模板/结构上，组件里 `mergeRef` 负责安装，`mergeInputRef.current`（每次渲染刷新）提供 `buildMergeNode` 的输入，数据 effect 依赖 `dict/summary/balance/*Error/refreshing/justRefreshed/panelOpen` 调 `mergeRef.current.sync()`
   - `buildMergeNode()` / `updateMergeNode()`：pill 触发器 + 展开面板的全部 DOM。**形状不变时走原地 patch**（`sameMergeShape` → `updateMergeNode`），点击监听与**展开状态**在数据刷新时都不丢；形状变化（余额出现/消失、段报错）才重建，重建后由 React 的 `panelOpen` 状态重新展开。`patchText` 只写叶子 slot——label 是容器，写它的 `textContent` 会把 cost/balance 子节点整片抹掉
   - `disposeMergeNode()`：每个节点都持有一个挂到 `body` 的面板 + document 级监听（outside pointerdown / Escape），**discard 掉的候选节点也必须走它**，否则每次 sync 都往 `body` 漏一个面板
   - `placeOpenPanel()`：面板 placement 必须在节点**入 DOM 之后**才做（此前触发器没有盒子，会闪在视口原点）
-- `scripts/*.mjs` — 自包含 smoke（无框架依赖，mock DOM / mock settings scope）；`dom-smoke.mjs` 的 DOM 替身刻意保留**真实语义**（`textContent` 写入清空子节点、`querySelectorAll` 只搜后代、`getBoundingClientRect`/`replaceWith`/`removeAttribute`），并含 MutationObserver 替身，覆盖「统计栏迟到」「数据迟到（空状态仍装观察器）」「原地 patch 保留面板」「面板不泄漏」四类回归
+- `scripts/*.mjs` — 自包含 smoke（无框架依赖，mock DOM / mock settings scope）；`dom-smoke.mjs` 的 DOM 替身刻意保留**真实语义**（`textContent` 写入清空子节点、`querySelectorAll` 只搜后代、`getBoundingClientRect`/`replaceWith`/`removeAttribute`），并含 MutationObserver + `window.setInterval` 替身（`tickIntervals()` 手动跑看门狗），覆盖「统计栏迟到」「数据迟到（空状态仍装观察器）」「统计栏缺席时挂锚点」「脱离文档期间回调后观察器仍在岗」「看门狗补挂丢失节点」「原地 patch 保留面板」「面板不泄漏」回归
 - `cordis.patch.yml` — bundle patch；`package.json` `dsh.bundle.patch` 指向它
 
 ## 兼容性（重要，改代码前必读）

@@ -8,7 +8,7 @@ DSH（DeepSeek Harness）Web 插件：把**本次会话的 Token 费用估算**�
 
 ## 界面
 
-费用/余额是一个与自带统计项**同款的可点击 pill**，追加在自带统计栏同一行（会话尚无统计内容时整行都不存在，也就暂不显示）：
+费用/余额是一个与自带统计项**同款的可点击 pill**，追加在自带统计栏同一行；若该会话自带统计栏整行都不存在（全新会话，或冷会话加载的头一秒），pill 会**先独立显示在输入框上方**（同一套字号/内边距/圆角），统计栏一出现就自动并回那一行：
 
 ```
 [⏱ 2 轮 61 步 · 287 tok/s]   [🗄 6.6M tok · 缓存命中 97%]   [¥ 费用 ¥1.94 · 余额 ¥3.63]
@@ -19,6 +19,7 @@ DSH（DeepSeek Harness）Web 插件：把**本次会话的 Token 费用估算**�
 - DSH 0.1.5 起自带统计栏改为 **`StatsPills`**：居中的 flex 行、由带图标的 pill 组成（`data-composer-stats` 标记），取代了此前单行省略号文本的 `StatsLine`。本插件的 pill 因此按同一套 13/20 字号层级、同一 `1px 8px` 内边距与 24px 圆角、同一 hover / `aria-expanded` 背景渲染，自带 ¥ 图标，视觉上与自带 pill 齐平。
 - **自带统计栏会"迟到"**：`StatsPills` 在会话有步骤或 token 之前返回 `null`（整行都不存在），所以插件必须能在统计栏**之后**挂载的情况下仍然接上去——见下文「兼容性」。
 - **数据也会迟到**：刚重启 host 时首次费用/余额响应还在路上，组件却已经挂载（费用等第一次 summary、余额等上游查询或缓存）。所以观察器**无条件安装**：曾经在"暂时没东西可画"时干脆不装，结果没有任何人在等统计栏出现，费用段要等页面刷新（数据已被预热）才显示——这就是「每次重启后打开界面都要刷新一次」的原因。现在首个 payload 到达前 `sync()` 只是不画东西，观察器始终在岗。
+- **切换会话时整个输入区会被拆掉重建**：打开一个**没有客户端缓存**的会话要等约 1 秒，这一秒里锚点处于**已脱离文档**的子树中。观察器过去只在"宿主仍然连在文档里"时才重新挂载自己——一次这样的回调就让它**永久失效**，费用段再也回不来，只能刷新页面（刷新等于重新挂载、装上新的观察器）。现在重新挂载是**无条件**的（脱离文档的节点依然会派发子树变更），另有一个 1 秒看门狗兜底：只要该显示的 pill 不在位（节点被 React 抹掉、统计栏被整体换掉、锚点换了父节点）就重新接回去。
 - ≤ 0.1.4 的自带统计行有 748px 宽度上限 + 省略号截断，会把追加段裁掉；本插件会**自动把统计行放宽到容器全宽并取消裁剪**（效果同 zh_pro「统计全显示」，但不依赖它），因此无需安装 zh_pro 也能完整显示。
 
 设置项（**设置 → 插件 → 插件配置 → 会话费用显示**，经 `session-cost` settings namespace 持久化到 `~/.dsh/settings.yaml`，即时生效；0.1.1 及更早版本的 localStorage 配置会在首次加载时自动迁移）：
@@ -77,9 +78,12 @@ dsh plugin --profile web remove @kidli1412/dsh-session-cost
 - **0.2.0（DSH 0.1.5 适配 + 交互重做）**：三处必须改动，否则统计栏里**完全看不到**费用/余额段——
   1. **不再 require `@deepseek-ai/dsh-client-ui-primitives`**。0.1.5 起该包不再随 DSH 安装（依赖树里已无此包，客户端模块图因此没有这一行），而 plugin bundle 的 `require()` 对**未注册模块是抛错**的（loader 的 loud 语义），一处 require 就会让**整个客户端 half 加载失败**：dock 锚点、合并段、设置卡片全部消失。本插件的图标改为内联 SVG 自绘，bundle 不再依赖任何可选宿主模块。
   2. **统计栏标记与定位**：优先按 `data-composer-stats` 属性定位（0.1.5 新增），文本 `N 轮 · M 步` 只作旧版回退且改为非锚定匹配（0.1.5 的 pill 文本已无 `·` 分隔）。
-  3. **两个"迟到"**：`StatsPills` 在会话有步骤/token 前返回 `null`（统计栏迟到），而重启 host 后首次 summary/余额响应仍在路上（数据迟到）。前者要求观察器监听容器**子树**（`childList` + `characterData` + `subtree`），后者要求观察器**无条件安装**——否则费用段要么永不出现，要么必须刷新页面才出现。
+  3. **两个"迟到"**必须同时处理：`StatsPills` 在会话有步骤/token 前返回 `null`（**统计栏迟到**）→ 观察器必须监听容器**子树**（`childList` + `characterData` + `subtree`）；重启 host 后首次 summary/余额响应仍在路上（**数据迟到**）→ 观察器必须**无条件安装**。
   4. **价格与模型 id 同步跟进**：0.1.5 把 V4-Flash 路由成短 id `deepseek-flash`，且官方在 2026-09-10 发布 V4.1-Flash 并调价；本版引入**价格世代**模型（`legacy` / `v4:*` / 当前 `peak`/`offpeak`）与别名解析，详见下文「定价表」。
   交互上，费用/余额段从"悬停气泡"改为**与自带统计项同款的可点击 pill + 点击展开面板**。
+- **0.2.1（切会话丢费用 + 统计栏缺席时的显示）**：
+  1. **切会话不再丢 pill**。切换会话（尤其是**没有客户端缓存**、要等约 1 秒的旧会话）时整个输入区被拆掉重建，锚点会短暂处于**脱离文档**的子树中，而 0.2.0 只在宿主仍 `isConnected` 时才重新挂载观察器——一次这样的回调就让观察器**永久失效**：费用消失，切回新会话也不恢复，必须刷新页面（刷新等于重新挂载、装上新的观察器）。0.2.1 无条件重挂（脱离文档的子树照样派发变更），并加 1 秒看门狗兜底补挂；观察器也改为**每个组件挂载只装一次**，数据变化走 `sync()` 推入（不再每 30 秒拆掉重建节点）。
+  2. **统计栏缺席时先挂在锚点自身**（`[data-solo]`，字号/内边距/最大宽度照抄 `.bOPqQW_root`），统计栏一出现即挪回栏内——全新会话与冷会话加载中都有费用读数。
 - **0.1.8（DSH 0.1.2 适配）**：rc.1 起 live session 不再携带 `.events` 数组——事件总数读 `session.seq`、逐条读 `session.eventAt(seq)`（与官方 `dsh-token-meter` 相同的读法），费用折叠已适配；客户端注入模块列表同步为新架构模块（见上）。
 - **降级说明**：本版本已不再声明 `0.1.2-*` 兼容（0.2.0 起 `dshReleases` 只列 0.1.5 线）。需要 0.1.2 线的用户请使用 0.1.9。
 
@@ -90,7 +94,7 @@ dsh plugin --profile web remove @kidli1412/dsh-session-cost
 | `lib/index.js` | 服务端：`GET /api/session-cost/summary?session=<id>`（增量折叠会话事件并按模型计价）、`GET /api/session-cost/balance`（DeepSeek 余额，loopback-only 精确路由，`?refresh=1` 强制绕过缓存）；注册 `session-cost` settings namespace（`lowBalanceThreshold`，供配置卡读写） |
 | `lib/cost.js` | 纯函数：按模型 token 折叠（replace-last-sample 语义）+ CNY 单价表 + 费用计算 |
 | `lib/balance.js` | 纯函数：DeepSeek 余额接口查询与状态归一化 |
-| `lib/client.js` | 浏览器端：`conversation.composer.dock` 槽位（id `session-cost`, order 100）+ `settings.plugin.item` 设置卡片（key `session-cost`）；把费用/余额 pill 追加进自带统计栏 DOM（`startStatsRowObserver`：子树 MutationObserver，统计栏迟到/被 React 重渲染后都会重新挂载；`updateMergeNode` 原地 patch 数值），点击展开挂到 `document.body` 的明细面板（`placeOpenPanel` 做视口夹取） |
+| `lib/client.js` | 浏览器端：`conversation.composer.dock` 槽位（id `session-cost`, order 100）+ `settings.plugin.item` 设置卡片（key `session-cost`）；把费用/余额 pill 追加进自带统计栏 DOM（`startStatsRowObserver`：子树 MutationObserver + 无条件重挂 + 1 秒看门狗，统计栏迟到/被 React 重渲染/切会话重建后都会重新挂载；统计栏不存在时先挂在锚点自身；`updateMergeNode` 原地 patch 数值），点击展开挂到 `document.body` 的明细面板（`placeOpenPanel` 做视口夹取） |
 
 费用为**估算值**：token 用量来自会话日志中 provider 上报的 usage 样本，单价表为写死的默认值，价格变动后请更新 `lib/cost.js` 的 `DEFAULT_PRICING`（或通过插件配置 `pricing` 覆盖）。
 
