@@ -4,13 +4,15 @@
 // dsh-settings' resolve): an empty user section resolves through the
 // defaults, bad values are rejected (which is what makes the Host refuse a
 // bad write), and unknown keys (e.g. the documented `pricing` override)
-// survive resolution so the section can carry both the card's fields and the
+// survive resolution so the section can carry both the panel's field and the
 // pricing table without clobbering each other.
 import assert from "node:assert/strict";
 import { SETTINGS_NAMESPACE, SessionCostSettingsSchema, resolvePricing } from "../lib/index.js";
 import { periodsOf, LEGACY_PRICING } from "../lib/cost.js";
 
-// Namespace branding: the exact string the client card keys on.
+// Namespace branding: the exact string the client scope binds. There is no
+// settings CARD any more (0.2.6 moved the threshold into the details panel),
+// but the namespace still has to exist on the Host for the value to persist.
 assert.equal(typeof SETTINGS_NAMESPACE, "string");
 assert.equal(SETTINGS_NAMESPACE, "session-cost", "namespace must be session-cost");
 

@@ -252,7 +252,8 @@ const zhDict = (key) => ({
 	"tooltipInput": "输入", "tooltipOutput": "输出", "tooltipTokens": "tokens",
 	"tooltipPeak": "peak", "tooltipOffpeak": "offpeak", "tooltipLegacy": "legacy",
 	"tooltipToppedUp": "充值余额", "tooltipGranted": "赠送余额", "tooltipUpdated": "更新于 {time}",
-	"tooltipPricingNote": "note", "tooltipNoModels": "暂无 token 用量", "unpriced": "未计价"
+	"tooltipPricingNote": "note", "tooltipNoModels": "暂无 token 用量", "unpriced": "未计价",
+	"settingsThreshold": "低余额阈值", "settingsThresholdUnit": "元", "settingsThresholdHint": "低于该值显示为红色"
 }[key] ?? key);
 
 // ---- findStatsRow -----------------------------------------------------
@@ -376,9 +377,11 @@ assert.equal(node.hasAttribute("title"), false, "the hover title must be gone (t
 const panel = nodePanel(node);
 assert.ok(panel !== null, "details panel missing");assert.equal(panel.hidden, true, "the panel must start closed");
 assert.equal(panel.getAttribute("role"), "dialog", "the panel must be a dialog");
-// Panel content: title total, one row pair per model, balance split.
+// Panel content: title total, one row pair per model, balance split, and the
+// low-balance threshold field (which lives here, not in the DSH settings tab).
 assert.equal(panel.querySelector("[data-slot=title-value]").textContent, "¥0.4549", "title total missing");
-assert.equal(panel.querySelectorAll("[data-slot=row-label]").length, 5, "two model rows + balance + toppedUp + granted expected");
+assert.equal(panel.querySelectorAll("[data-slot=row-label]").length, 6, "two model rows + balance + toppedUp + granted + threshold expected");
+assert.ok(panel.querySelector("[data-slot=threshold-input]") !== null, "the threshold field must be in the panel");
 const modelValue = panel.querySelectorAll("[data-slot=row-value]")[0].textContent;
 assert.ok(modelValue.includes("输入 169,013") && modelValue.includes("¥0.4549"), `model row malformed: "${modelValue}"`);
 // A model that billed two periods appends the 峰谷 split.
@@ -600,7 +603,7 @@ const refreshPanel = body.querySelectorAll("[data-slot=panel]").at(-1);
 const panelList = refreshPanel.querySelector("[data-slot=panel-list]");
 const rowLabels = (panel) => panel.querySelectorAll("[data-slot=row-label]").map((cell) => cell.textContent);
 const rowValues = (panel) => panel.querySelectorAll("[data-slot=row-value]").map((cell) => cell.textContent);
-assert.deepEqual(rowLabels(refreshPanel).slice(-2), ["充值余额", "赠送余额"], "the breakdown rows must start out present");
+assert.deepEqual(rowLabels(refreshPanel).slice(-3, -1), ["充值余额", "赠送余额"], "the breakdown rows must start out present");
 assert.ok(rowValues(refreshPanel)[2].includes("¥6.43"), "the breakdown must start at the old balance");
 // The merge CONTAINS a defect instead of surfacing it (an open panel must never
 // take the app down), so a broken patch shows up as a swallowed warning rather
@@ -644,18 +647,72 @@ assert.equal(warnCell.getAttribute("data-warn"), "true", "the warn flag must be 
 // the surplus cells and the missing ones have to be reconciled in place.
 refreshState = mergeData({ open: true, cost: null, models: [], totalValue: 2.5, balance: { total: 2.5, toppedUp: 2.4, granted: 0.1 } });
 refreshLive.sync();
-assert.equal(panelList.children.length, 8, "the empty state must drop the surplus model cells");
+assert.equal(panelList.children.length, 10, "the empty state must drop the surplus model cells");
 assert.ok(rowLabels(refreshPanel)[0].includes("暂无 token 用量"), "the empty state must be reachable in place");
 refreshState = mergeData({ open: true, cost: 1.5, totalValue: 2.5, balance: { total: 2.5, toppedUp: 2.4, granted: 0.1 } });
 refreshLive.sync();
 console.warn = restoreWarn;
 assert.deepEqual(contained, [], "the list patch must never fall back to a contained failure");
 assert.deepEqual(rowLabels(refreshPanel).slice(0, 2), ["deepseek-v4-flash", "deepseek-v4-pro"], "the model rows must replace the empty-state row");
-assert.deepEqual(rowLabels(refreshPanel).slice(-2), ["充值余额", "赠送余额"], "the breakdown rows must survive the growth");
-assert.equal(panelList.children.length, 10, "the grown list must carry both model rows plus the split");
+assert.deepEqual(rowLabels(refreshPanel).slice(-3, -1), ["充值余额", "赠送余额"], "the breakdown rows must survive the growth");
+assert.equal(panelList.children.length, 12, "the grown list must carry both model rows plus the split");
 assert.equal(rowValues(refreshPanel).length, 4, "the grown list must expose four value cells");
 refreshLive.dispose();
 assert.equal(refreshPanel.parentElement, null, "teardown must still remove the panel after in-place growth");
+
+// ---- the low-balance threshold lives in the panel ----------------------
+// It used to be a card in 设置 → 插件 → 插件配置; it now sits in the panel as
+// the last dl row (`低余额阈值 [10] 元`), so the place that SHOWS the color owns
+// the number. The field is a slot-bearing cell, which is exactly what keeps the
+// in-place patch from writing over a half-typed value.
+const thresholdCommits = [];
+let thresholdState = mergeData({
+	open: true,
+	lowBalanceThreshold: 10,
+	onThreshold: (value) => thresholdCommits.push(value)
+});
+const thresholdLive = startStatsRowObserver(liveAnchor, () => buildMergeNode(zhDict, thresholdState));
+const thresholdPanel = body.querySelectorAll("[data-slot=panel]").at(-1);
+const thresholdInput = thresholdPanel.querySelector("[data-slot=threshold-input]");
+assert.ok(thresholdInput !== null, "the panel must carry the threshold field");
+assert.equal(thresholdInput.value, "10", "the field must start at the stored threshold");
+assert.equal(thresholdInput.getAttribute("aria-label"), "低余额阈值", "the field needs a label for screen readers");
+assert.equal(thresholdInput.getAttribute("data-slot"), "threshold-input", "the input is its own slot");
+const thresholdCells = thresholdPanel.querySelector("[data-slot=panel-list]").children;
+assert.equal(thresholdCells.at(-2).textContent, "低余额阈值", "the threshold is the last labelled row");
+assert.ok(thresholdCells.at(-1).textContent.includes("元"), "the last cell carries the unit");
+
+// Committing a value: sanitized, echoed back, handed to the owner — and the
+// handler is read at EVENT time, so a new session's callback is the one used.
+thresholdCommits.length = 0;
+thresholdInput.value = "25";
+thresholdInput.dispatchEvent(new EventStub("change"));
+assert.deepEqual(thresholdCommits, [25], "a valid value must be committed as a number");
+assert.equal(thresholdInput.value, "25", "the field must keep the committed value");
+const enter = new EventStub("keydown");
+enter.key = "Enter";
+thresholdInput.value = "30";
+thresholdInput.dispatchEvent(enter);
+assert.deepEqual(thresholdCommits, [25, 30], "Enter must commit without blurring");
+thresholdInput.value = "-3";
+thresholdInput.dispatchEvent(new EventStub("change"));
+assert.deepEqual(thresholdCommits, [25, 30], "a negative value must not be committed");
+assert.equal(thresholdInput.value, "10", "a rejected value must snap back to the stored threshold");
+thresholdInput.value = "  ";
+thresholdInput.dispatchEvent(new EventStub("change"));
+assert.deepEqual(thresholdCommits, [25, 30], "an emptied field must not commit");
+assert.equal(thresholdInput.value, "10", "an emptied field must restore the stored threshold");
+
+// A 30 s data refresh must NOT eat what is being typed: the threshold cell is a
+// container of slots, so `patchText` skips it (this is the regression guard for
+// the day someone "simplifies" the list patch into a text write).
+thresholdInput.value = "42";
+thresholdState = mergeData({ open: true, lowBalanceThreshold: 10, totalValue: 3.5 });
+thresholdLive.sync();
+assert.equal(thresholdInput.value, "42", "a data refresh must not overwrite a half-typed threshold");
+assert.equal(body.querySelectorAll("[data-slot=panel]").at(-1), thresholdPanel, "the panel element must survive it");
+thresholdLive.dispose();
+assert.equal(thresholdPanel.parentElement, null, "teardown must remove the panel with the field");
 
 // The DATA, not just the bar, can arrive late: on a freshly started host the
 // first summary/balance responses are still in flight while the component
@@ -848,6 +905,36 @@ off();
 mock.publish({ status: "ready", value: { lowBalanceThreshold: 5 }, writable: true, mode: "host" });
 assert.equal(notified, 1, "unsubscribed listener must not fire");
 store.dispose();
+
+// ---- the plugin body registers exactly one seat ------------------------
+// The threshold used to have a second editor: a card in 设置 → 插件 →
+// 插件配置 (`settings.plugin.item`, keyed by the settings namespace). It now
+// lives in the panel, so the client must register the composer dock and
+// NOTHING else — a second card would be a competing editor — while still
+// binding the same settings namespace (that is what keeps the value durable in
+// settings.yaml after the move).
+const bound = [];
+const registered = [];
+const bodyScope = {
+	getSnapshot: () => ({ status: "ready", value: { lowBalanceThreshold: 25 } }),
+	subscribe: () => () => {},
+	set: () => Promise.resolve()
+};
+exportsObj.apply({
+	settingsScope: { bind: (spec) => { bound.push(spec); return bodyScope; } },
+	effect: (fn) => { fn(); return () => {}; },
+	locale: { register: (ns) => { registered.push(ns); return () => {}; } },
+	slots: {
+		inject: (name, callback) => callback(),
+		register: (options) => { registered.push(options); return () => {}; }
+	}
+});
+assert.deepEqual(bound, [{ namespace: "session-cost" }], "the settings scope must still bind the same namespace");
+assert.deepEqual(registered.filter((entry) => typeof entry === "object").map((entry) => [entry.name, entry.id, entry.key]), [
+	["conversation.composer.dock", "session-cost", void 0]
+], "the composer dock must be the only slot the plugin registers");
+assert.equal(exportsObj.SessionCostSettingsCard, void 0, "the settings card must not come back");
+assert.equal(exportsObj.chevronDownIcon, void 0, "the settings-card chevron goes with it");
 
 // ---- the built-in bar's own layout is never rewritten -----------------
 // Up to 0.2.2 the merge widened + unclipped the stats row with inline styles,

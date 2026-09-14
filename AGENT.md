@@ -17,9 +17,10 @@ DSH（DeepSeek Harness）web 插件：把「本会话费用估算 + DeepSeek 账
   - 路由：`GET /api/session-cost/summary?session=<id>`、`GET /api/session-cost/balance`（loopback-only 精确路由，`?refresh=1` 绕缓存；2 分钟 TTL + single-flight）
   - settings namespace：**`"session-cost"` 字面量**（`@deepseek-ai/dsh-settings` 不导出 `settingsNamespace()`；`register/get/update` 内部仍校验 `/^[a-z][a-z0-9-]*$/`）
 - `lib/client.js` — 浏览器 half：**手写 `window.__ModuleLoader__.load({id, factory})` bundle，无构建步骤**；React 组件（`require("react")` / `require("react/jsx-runtime")`）；CSS 走 `data-plugin-css` 通道（factory 内注入 `<style>`）；exports `{ inject, apply, ... }`
-  - **bundle 内只能 require `react` / `react/jsx-runtime`**：DSH 客户端模块图对未注册模块**抛错**，一处顶层 require 会让整个 client half 加载失败。全部图标（费用 ¥ 徽标、刷新、设置卡箭头）都是内联 SVG 自绘，**不要**再 require `@deepseek-ai/dsh-client-ui-primitives`（0.1.5 起 DSH 安装里已无此包）
-  - `conversation.composer.dock`（list slot，id `session-cost`，order 100）
-  - `settings.plugin.item`（keyed slot，**key** `session-cost`；Host 必须 serve 该 namespace 卡片才渲染）
+  - **bundle 内只能 require `react` / `react/jsx-runtime`**：DSH 客户端模块图对未注册模块**抛错**，一处顶层 require 会让整个 client half 加载失败。全部图标（费用钱包、刷新箭头、面板标题）都是内联 SVG 自绘，**不要**再 require `@deepseek-ai/dsh-client-ui-primitives`（0.1.5 起 DSH 安装里已无此包）
+  - `conversation.composer.dock`（list slot，id `session-cost`，order 100）——**这是本插件注册的唯一槽位**
+  - **不再注册 `settings.plugin.item`**（0.2.6 起）：低余额阈值只有一个编辑器，就是明细面板最后一行（`dt`「低余额阈值」+ 含 `<input data-slot="threshold-input">` 的 `dd` + 单位）。Host 侧仍注册 `session-cost` namespace、客户端仍 `ctx.settingsScope.bind({namespace:"session-cost"})`——**值照旧持久化在 settings.yaml**，搬的只是界面；别再往 DSH 设置里加卡片
+    - 该 `dd` 是**含 slot 的单元格**，`patchText` 因此天然跳过它，30 秒自动刷新不会吃掉正在输入的值；提交走 `change`（失焦/回车）+ 显式 Enter，值经 `sanitizeThreshold` 写回 `configStore.set({lowBalanceThreshold})` → `scope.set`；空串/负数**不提交**并把输入框恢复成已存值；回调从 `data.onThreshold` 在**事件时**读取（同 ⟳ 按钮）
   - `findStatsRow()`：优先按 `data-composer-stats` 属性定位自带统计栏（0.1.5 `StatsPills`），文本 `N 轮 61 步` / `N turns 61 steps` 仅作旧版回退（非锚定正则）
   - `startStatsRowObserver(anchor, writeMerge)` → `{ sync, dispose }`：合并段的挂载与重挂载唯一入口，**每个组件挂载只装一次**，数据变化由 `sync()` 推入（不要在数据 effect 里重建观察器：那会每 30 秒拆掉重建节点、并且掩盖"观察器已死"的事实）。**三个"迟到/重建"必须同时处理**：①**统计栏迟到**（`StatsPills` 在会话有步骤/token 前返回 `null`）→ 观察器必须监听锚点 parent 的**子树**（`childList`+`characterData`+`subtree`），只监听容器 `childList` 会在统计栏出现时永不回调；②**数据迟到**（重启 host 后首次 summary/余额仍在路上，而组件已挂载）→ 观察器**必须无条件安装**（曾在 `writeMerge()` 返回 null 时提前 return，导致没人等统计栏、只有页面刷新后才显示）；③**宿主重建**（切会话时整个输入区被拆掉重建，冷会话要等约 1 秒，回调可能在锚点**脱离文档**时触发）→ 重新挂载必须**无条件**（`observer.observe(host, …)` 不要加 `host.isConnected` 判断；脱离文档的子树照样派发变更）。**0.2.0 的 bug 就是③**：一次脱离文档期间的回调让观察器永久失效 → "切到没缓存的旧会话费用消失、切回来也不恢复、必须刷新页面"。另配 1 秒看门狗（`MERGE_WATCHDOG_MS`）兜底：`rendered && (统计栏已脱离文档 || 节点不在宿主里)` 就 `sync()` 重挂。无数据时 `sync()` 只是不画节点
   - 统计栏不存在时**不能什么都不画**：`sync()` 把节点挂到锚点自身并打 `data-solo="true"`（CSS 照抄 `.bOPqQW_root` 的字号/内边距/最大宽度），统计栏出现即 `drop(anchor)` 挪回栏内。否则全新会话/冷会话加载中完全没有费用读数
@@ -30,7 +31,7 @@ DSH（DeepSeek Harness）web 插件：把「本会话费用估算 + DeepSeek 账
     - 节点寿命跨越多次 render，所以 `onToggle`/`onRefresh` 必须在**点击时**从 `data` 上读；组件侧对应维护**同一个 state 对象**（`mergeInputRef.current` 只创建一次、逐字段刷新），不要每次渲染换新对象，否则处理器会停留在构建那一刻的闭包（刷新按钮绑到旧会话）
   - `disposeMergeNode()`：每个节点都持有一个挂到 `body` 的面板 + document 级监听（outside pointerdown / Escape），**discard 掉的候选节点也必须走它**，否则每次 sync 都往 `body` 漏一个面板
   - `placeOpenPanel()`：面板 placement 必须在节点**入 DOM 之后**才做（此前触发器没有盒子，会闪在视口原点）
-- `scripts/*.mjs` — 自包含 smoke（无框架依赖，mock DOM / mock settings scope）；`dom-smoke.mjs` 的 DOM 替身刻意保留**真实语义**（`textContent` 写入清空子节点、`querySelectorAll` 只搜后代、`getBoundingClientRect`/`replaceWith`/`removeAttribute`），并含 MutationObserver + `window.setInterval` 替身（`tickIntervals()` 手动跑看门狗），覆盖「统计栏迟到」「数据迟到（空状态仍装观察器）」「统计栏缺席时挂锚点」「脱离文档期间回调后观察器仍在岗」「看门狗补挂丢失节点」「原地 patch 保留面板（含 caption 面板读数与点击展开/收起往返）」「点击时读最新处理器」「面板不泄漏」「统计栏行内样式不被改写」「面板列表单元格随数据原地更新（余额构成 / 逐模型读数 / `data-warn` / 列表原位增减，且不得退化成被 `console.warn` 吞掉的失败）」回归
+- `scripts/*.mjs` — 自包含 smoke（无框架依赖，mock DOM / mock settings scope）；`dom-smoke.mjs` 的 DOM 替身刻意保留**真实语义**（`textContent` 写入清空子节点、`querySelectorAll` 只搜后代、`getBoundingClientRect`/`replaceWith`/`removeAttribute`），并含 MutationObserver + `window.setInterval` 替身（`tickIntervals()` 手动跑看门狗），覆盖「统计栏迟到」「数据迟到（空状态仍装观察器）」「统计栏缺席时挂锚点」「脱离文档期间回调后观察器仍在岗」「看门狗补挂丢失节点」「原地 patch 保留面板（含 caption 面板读数与点击展开/收起往返）」「点击时读最新处理器」「面板不泄漏」「统计栏行内样式不被改写」「面板列表单元格随数据原地更新（余额构成 / 逐模型读数 / `data-warn` / 列表原位增减，且不得退化成被 `console.warn` 吞掉的失败）」「面板内的阈值输入框（提交 / 拒绝 / 回车 / 刷新不覆盖半途输入）」「`apply()` 只注册 composer dock 一个槽位、且仍绑定同一 namespace」回归
 - `cordis.patch.yml` — bundle patch；`package.json` `dsh.bundle.patch` 指向它
 
 ## 兼容性（重要，改代码前必读）
