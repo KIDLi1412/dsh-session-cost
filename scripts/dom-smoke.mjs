@@ -377,11 +377,11 @@ assert.equal(node.hasAttribute("title"), false, "the hover title must be gone (t
 const panel = nodePanel(node);
 assert.ok(panel !== null, "details panel missing");assert.equal(panel.hidden, true, "the panel must start closed");
 assert.equal(panel.getAttribute("role"), "dialog", "the panel must be a dialog");
-// Panel content: title total, one row pair per model, balance split, and the
-// low-balance threshold field (which lives here, not in the DSH settings tab).
+// Panel content: title total, one row pair per model, balance split — the
+// reading grid is numbers only; the low-balance threshold field is a line of
+// its own under the 更新于/⟳ row (see the dedicated case further down).
 assert.equal(panel.querySelector("[data-slot=title-value]").textContent, "¥0.4549", "title total missing");
-assert.equal(panel.querySelectorAll("[data-slot=row-label]").length, 6, "two model rows + balance + toppedUp + granted + threshold expected");
-assert.ok(panel.querySelector("[data-slot=threshold-input]") !== null, "the threshold field must be in the panel");
+assert.equal(panel.querySelectorAll("[data-slot=row-label]").length, 5, "two model rows + balance + toppedUp + granted expected");
 const modelValue = panel.querySelectorAll("[data-slot=row-value]")[0].textContent;
 assert.ok(modelValue.includes("输入 169,013") && modelValue.includes("¥0.4549"), `model row malformed: "${modelValue}"`);
 // A model that billed two periods appends the 峰谷 split.
@@ -603,7 +603,7 @@ const refreshPanel = body.querySelectorAll("[data-slot=panel]").at(-1);
 const panelList = refreshPanel.querySelector("[data-slot=panel-list]");
 const rowLabels = (panel) => panel.querySelectorAll("[data-slot=row-label]").map((cell) => cell.textContent);
 const rowValues = (panel) => panel.querySelectorAll("[data-slot=row-value]").map((cell) => cell.textContent);
-assert.deepEqual(rowLabels(refreshPanel).slice(-3, -1), ["充值余额", "赠送余额"], "the breakdown rows must start out present");
+assert.deepEqual(rowLabels(refreshPanel).slice(-2), ["充值余额", "赠送余额"], "the breakdown rows must start out present");
 assert.ok(rowValues(refreshPanel)[2].includes("¥6.43"), "the breakdown must start at the old balance");
 // The merge CONTAINS a defect instead of surfacing it (an open panel must never
 // take the app down), so a broken patch shows up as a swallowed warning rather
@@ -647,24 +647,25 @@ assert.equal(warnCell.getAttribute("data-warn"), "true", "the warn flag must be 
 // the surplus cells and the missing ones have to be reconciled in place.
 refreshState = mergeData({ open: true, cost: null, models: [], totalValue: 2.5, balance: { total: 2.5, toppedUp: 2.4, granted: 0.1 } });
 refreshLive.sync();
-assert.equal(panelList.children.length, 10, "the empty state must drop the surplus model cells");
+assert.equal(panelList.children.length, 8, "the empty state must drop the surplus model cells");
 assert.ok(rowLabels(refreshPanel)[0].includes("暂无 token 用量"), "the empty state must be reachable in place");
 refreshState = mergeData({ open: true, cost: 1.5, totalValue: 2.5, balance: { total: 2.5, toppedUp: 2.4, granted: 0.1 } });
 refreshLive.sync();
 console.warn = restoreWarn;
 assert.deepEqual(contained, [], "the list patch must never fall back to a contained failure");
 assert.deepEqual(rowLabels(refreshPanel).slice(0, 2), ["deepseek-v4-flash", "deepseek-v4-pro"], "the model rows must replace the empty-state row");
-assert.deepEqual(rowLabels(refreshPanel).slice(-3, -1), ["充值余额", "赠送余额"], "the breakdown rows must survive the growth");
-assert.equal(panelList.children.length, 12, "the grown list must carry both model rows plus the split");
+assert.deepEqual(rowLabels(refreshPanel).slice(-2), ["充值余额", "赠送余额"], "the breakdown rows must survive the growth");
+assert.equal(panelList.children.length, 10, "the grown list must carry both model rows plus the split");
 assert.equal(rowValues(refreshPanel).length, 4, "the grown list must expose four value cells");
 refreshLive.dispose();
 assert.equal(refreshPanel.parentElement, null, "teardown must still remove the panel after in-place growth");
 
 // ---- the low-balance threshold lives in the panel ----------------------
-// It used to be a card in 设置 → 插件 → 插件配置; it now sits in the panel as
-// the last dl row (`低余额阈值 [10] 元`), so the place that SHOWS the color owns
-// the number. The field is a slot-bearing cell, which is exactly what keeps the
-// in-place patch from writing over a half-typed value.
+// It used to be a card in 设置 → 插件 → 插件配置; it is now a line of its own in
+// the panel, directly UNDER the 更新于/⟳ row (`低余额阈值 [10] 元`), so the
+// reading grid stays numbers only and the place that SHOWS the color owns the
+// number. The row sits outside `panel-list` and carries no patched slot, which
+// is what keeps the in-place update from writing over a half-typed value.
 const thresholdCommits = [];
 let thresholdState = mergeData({
 	open: true,
@@ -678,9 +679,20 @@ assert.ok(thresholdInput !== null, "the panel must carry the threshold field");
 assert.equal(thresholdInput.value, "10", "the field must start at the stored threshold");
 assert.equal(thresholdInput.getAttribute("aria-label"), "低余额阈值", "the field needs a label for screen readers");
 assert.equal(thresholdInput.getAttribute("data-slot"), "threshold-input", "the input is its own slot");
-const thresholdCells = thresholdPanel.querySelector("[data-slot=panel-list]").children;
-assert.equal(thresholdCells.at(-2).textContent, "低余额阈值", "the threshold is the last labelled row");
-assert.ok(thresholdCells.at(-1).textContent.includes("元"), "the last cell carries the unit");
+const settingRow = thresholdPanel.querySelector("[data-slot=panel-setting]");
+assert.ok(settingRow !== null, "the field needs a row of its own");
+assert.equal(settingRow.parentElement, thresholdPanel, "the setting row is a direct child of the panel");
+assert.equal(settingRow.querySelector("[data-slot=panel-list]"), null, "the setting row must not be inside the reading grid");
+assert.equal(thresholdPanel.querySelector("[data-slot=panel-list]").contains(settingRow), false, "the reading grid must stay numbers only");
+assert.ok(settingRow.textContent.includes("低余额阈值"), "the row must carry its label");
+assert.ok(settingRow.textContent.includes("元"), "the row must carry the unit");
+// Order: everything in the panel, in document order — the setting row has to
+// come after the 更新于/⟳ line and before the pricing note.
+const panelOrder = thresholdPanel.querySelectorAll("[data-slot]").map((el) => el.getAttribute("data-slot"));
+assert.ok(panelOrder.indexOf("refresh") < panelOrder.indexOf("panel-setting"), "the setting must sit under the refresh row");
+assert.ok(panelOrder.indexOf("panel-updated") < panelOrder.indexOf("panel-setting"), "the setting must sit under the update time");
+assert.equal(panelOrder.at(-1), "panel-note", "the pricing note stays the last line");
+assert.ok(panelOrder.indexOf("panel-setting") < panelOrder.indexOf("panel-note"), "the setting sits above the note");
 
 // Committing a value: sanitized, echoed back, handed to the owner — and the
 // handler is read at EVENT time, so a new session's callback is the one used.
