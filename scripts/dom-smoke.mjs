@@ -920,12 +920,15 @@ store.dispose();
 
 // ---- the plugin body registers exactly one seat ------------------------
 // The threshold used to have a second editor: a card in 设置 → 插件 →
-// 插件配置 (`settings.plugin.item`, keyed by the settings namespace). It now
-// lives in the panel, so the client must register the composer dock and
+// 插件配置 (`settings.plugin.item`, keyed by the settings namespace). It lives
+// in the panel instead, so the client must register the composer dock and
 // NOTHING else — a second card would be a competing editor — while still
-// binding the same settings namespace (that is what keeps the value durable in
-// settings.yaml after the move).
-const bound = [];
+// reaching its durable value. DSH 0.2.0 moved that value onto the plugin CONFIG
+// FORM: `ctx.configForms.get(entryId)`, keyed by the profile entry id our
+// bundle row declares (`session-cost`), which is exactly what the panel writes
+// through. (Before 0.2.0 this was `ctx.settingsScope.bind({namespace})`; the
+// service is gone, and the plugin must not ask for it or it would wait forever.)
+const requestedForms = [];
 const registered = [];
 const bodyScope = {
 	getSnapshot: () => ({ status: "ready", value: { lowBalanceThreshold: 25 } }),
@@ -933,7 +936,7 @@ const bodyScope = {
 	set: () => Promise.resolve()
 };
 exportsObj.apply({
-	settingsScope: { bind: (spec) => { bound.push(spec); return bodyScope; } },
+	configForms: { get: (entryId) => { requestedForms.push(entryId); return bodyScope; } },
 	effect: (fn) => { fn(); return () => {}; },
 	locale: { register: (ns) => { registered.push(ns); return () => {}; } },
 	slots: {
@@ -941,7 +944,8 @@ exportsObj.apply({
 		register: (options) => { registered.push(options); return () => {}; }
 	}
 });
-assert.deepEqual(bound, [{ namespace: "session-cost" }], "the settings scope must still bind the same namespace");
+assert.deepEqual(requestedForms, ["session-cost"], "the config form must be keyed by the profile entry id");
+assert.deepEqual(exportsObj.inject, ["slots", "locale", "configForms"], "the client must inject the 0.2.0 services");
 assert.deepEqual(registered.filter((entry) => typeof entry === "object").map((entry) => [entry.name, entry.id, entry.key]), [
 	["conversation.composer.dock", "session-cost", void 0]
 ], "the composer dock must be the only slot the plugin registers");

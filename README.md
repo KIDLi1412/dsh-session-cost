@@ -20,7 +20,7 @@ DSH（DeepSeek Harness）Web 插件：把**本次会话的 Token 费用估算**�
 - **切换会话时整个输入区会被拆掉重建**：打开一个**没有客户端缓存**的会话要等约 1 秒，这一秒里锚点处于**已脱离文档**的子树中。观察器过去只在"宿主仍然连在文档里"时才重新挂载自己——一次这样的回调就让它**永久失效**，费用段再也回不来，只能刷新页面（刷新等于重新挂载、装上新的观察器）。现在重新挂载是**无条件**的（脱离文档的节点依然会派发子树变更），另有一个 1 秒看门狗兜底：只要该显示的 pill 不在位（节点被 React 抹掉、统计栏被整体换掉、锚点换了父节点）就重新接回去。
 - **自带统计栏的布局一律不改**：0.1.5 的统计栏是**居中 flex 行**（`width:100%`、`max-width:748px`、`gap:12px`，且不做 `overflow` 裁剪），追加的费用段只是这一组里的第三项，宽度本来就够——插件**不写统计栏的任何行内样式**。0.1.x 早期版本曾需要把统计行放宽才能显示追加段（≤ 0.1.4 的 `StatsLine` 有 748px 上限 + 省略号截断），那个补丁已在 0.2.3 删除。
 
-设置项就在**明细面板里、「更新于 / ⟳」的下一行**：`低余额阈值 [ 10 ] 元`，改完按回车或点开别处即生效，值经 `session-cost` settings namespace 持久化到 `~/.dsh/settings.yaml`；0.1.1 及更早版本的 localStorage 配置会在首次加载时自动迁移。
+设置项就在**明细面板里、「更新于 / ⟳」的下一行**：`低余额阈值 [ 10 ] 元`，改完按回车或点开别处即生效。从 0.3.0 起这个值作为**本插件的 profile 配置**保存（DSH 0.2.0 的设置模型：`Config` → 以 entry id `session-cost` 为键的表单 → 写进 profile patch），旧的 `~/.dsh/settings.yaml` 阈值会被 Host 在升级后**一次性抢救**回配置；0.1.1 及更早版本的 localStorage 配置也会在首次加载时自动迁移。
 
 - **低余额阈值**（默认 10 元）：余额**低于**该值时显示为红色，达到或高于时显示为黑色。变红同时作用于明细面板里的「账户余额」和统计栏 pill 的余额读数：
 
@@ -75,9 +75,15 @@ dsh plugin --profile web remove @kidli1412/dsh-session-cost
 
 ## 兼容性 / Compatibility
 
-- **DSH**：manifest 通过 `dsh.compatibility.dshReleases` 将官方最新版本 `0.1.5-rc.1`、`0.1.5-rc.2` 逐项声明为 `compatible`（DSH STORE 的精确逐版本兼容证据；仅范围声明不会恢复上架）。插件使用的客户端注入（`dsh-api-remotes` / `dsh-client-connection` / `dsh-client-locale` / `dsh-client-ui-conversation` / `dsh-client-ui-settings`）与 Host 服务（`settings` namespace、`webServer` 精确路由、`session.seq` + `session.eventAt`）在 0.1.5 版本线上保持稳定。
+- **DSH**：manifest 通过 `dsh.compatibility.dshReleases` 将当前版本线 `0.2.0-rc.2` 声明为 `compatible`（DSH STORE 的精确逐版本兼容证据；仅范围声明不会恢复上架）。插件使用的客户端注入（`dsh-api-remotes` / `dsh-client-connection` / `dsh-client-locale` / `dsh-client-ui-conversation` / `dsh-client-ui-settings`）、客户端服务（`slots` / `locale` / `configForms`）与 Host 服务（`webServer` 精确路由、`settings.describe` / `settings.update`、`credentials.resolve`、`session.seq` + `session.eventAt`）在 0.2.0 版本线上均已在真实安装中核对。
 - **Node**：`^22.19.0 || >=24.0.0`（与 DSH 一致）。
-- **宿主要求（dsh-market 显示）**：`engines.dsh: ^0.1.5-rc.1`，并将运行时依赖的 lockstep 宿主包声明为 `peerDependencies`（`dsh-host-webserver` / `dsh-session` / `dsh-credentials` / `dsh-settings` 与客户端模块 `dsh-api-remotes` / `dsh-client-connection` / `dsh-client-locale` / `dsh-client-ui-conversation` / `dsh-client-ui-settings`，均为 `^0.1.5-rc.1`）；插件市场会据此显示"宿主要求"并判断与当前 DSH 是否匹配。
+- **宿主要求（dsh-market 显示）**：`engines.dsh: ^0.2.0-rc.2`，并将运行时依赖的 lockstep 宿主包声明为 `peerDependencies`（`dsh-host-webserver` / `dsh-session` / `dsh-credentials` / `dsh-settings` 与客户端模块 `dsh-api-remotes` / `dsh-client-connection` / `dsh-client-locale` / `dsh-client-ui-conversation` / `dsh-client-ui-settings`，均为 `^0.2.0-rc.2`）；插件市场会据此显示"宿主要求"并判断与当前 DSH 是否匹配。这些包由 DSH 运行时提供、本插件**从不 import**，所以同时标为 `peerDependenciesMeta.optional`——npm/pnpm 不再把它们装进依赖树（0.2.0 起它们彼此还有 peer 关系，沿用旧的自动安装会直接解析冲突），而"宿主要求"的语义不受影响。
+- **0.3.0（DSH 0.2.0 适配）**：DSH 0.2.0 换了三套契约，宿主兼容闸门会**直接拒绝挂载**声明不符的 bundle（真实现象：插件在市场里显示"不兼容"、`rows: []`、统计栏里什么都没有）——
+  1. **宿主要求必须落在 0.2.0 线上**：闸门逐条比对 `peerDependencies` 里的 `@deepseek-ai/dsh*` 与运行时版本（`semver.satisfies(..., { includePrerelease: true })`），`^0.1.5-rc.1` 不满足 `0.2.0-rc.2`（caret 封顶在 `<0.2.0`），因此本版把 `engines.dsh` 与 9 个宿主 peer 一起提到 `^0.2.0-rc.2`。顺带把宿主包标为 optional peer，见上一条。
+  2. **设置模型重做**：0.1.x 的"插件自建 settings namespace + `settings.register(ns, schema)`"没了，`settings.get(ns)` 也没了。现在**插件导出的 `Config`（schemastery）就是设置表单**，以**profile entry id**（本插件 bundle patch 里的 `id: session-cost`）为键；Host 通过 `ctx.settings.describe()` 读别人的条目、`ctx.settings.update(ns, patch)` 写；浏览器端用 `ctx.configForms.get("session-cost")`（`getSnapshot` / `subscribe` / `set`），旧的 `ctx.settingsScope.bind({ namespace })` 已从客户端消失。本插件的配置存取因此整体改到这上面（面板里的阈值输入框 UI 不变）。
+  3. **统计栏与面板的皮肤同步**：`.bOPqQW_root` 不再自带宽度/内边距（`width:100%` + 748px 上限 + 侧边 clearance 移交给 composer 的 dock 容器），字号降到 `calc(--dsh-content-font-size-secondary - 1px)`，pill 圆角由 24px 改为 `999px` + `corner-shape:round`，stat-dialog 面板改用 `--dsw-radius-lg` 并加 `backdrop-filter`。本插件的 pill、solo 兜底行与明细面板按同一套值重绘，视觉仍与自带 pill 齐平。
+  4. **整站浏览器鉴权**：0.2.0 给 `dsh web` 的每个请求加了签名 cookie（`dsh web authentication required`），插件的两个端点因此只有带 cookie 的同源页面能到达；Host 侧的 loopback 精确路由fence 保留为第二道防线。
+  > 升级时会**自动抢救旧阈值**：DSH 自己的 `settings.yaml` 导入按 entry id 进行，而当时本插件正因上面的 peer 不符被拒挂载，导入失败后值只留在 `~/.dsh/settings.yaml.imported` 里。本版 Host 在启动后（等 Loader settle）读一次该文档，若条目还没有用户值就把非默认的 `lowBalanceThreshold` 写进配置——一次性、只读、失败即跳过。
 - **0.2.0（DSH 0.1.5 适配 + 交互重做）**：三处必须改动，否则统计栏里**完全看不到**费用/余额段——
   1. **不再 require `@deepseek-ai/dsh-client-ui-primitives`**。0.1.5 起该包不再随 DSH 安装（依赖树里已无此包，客户端模块图因此没有这一行），而 plugin bundle 的 `require()` 对**未注册模块是抛错**的（loader 的 loud 语义），一处 require 就会让**整个客户端 half 加载失败**：dock 锚点、合并段、面板全部消失。本插件的图标改为内联 SVG 自绘，bundle 不再依赖任何可选宿主模块。
   2. **统计栏标记与定位**：优先按 `data-composer-stats` 属性定位（0.1.5 新增），文本 `N 轮 · M 步` 只作旧版回退且改为非锚定匹配（0.1.5 的 pill 文本已无 `·` 分隔）。
@@ -93,16 +99,16 @@ dsh plugin --profile web remove @kidli1412/dsh-session-cost
 - **0.2.7（阈值行落到「更新于 / ⟳」下面一行）**：0.2.6 把它放在读数网格（`dt/dd`）的最后一行，读数和设置混在一起；现在它是面板里独立的一行、紧跟在更新时间与 ⟳ 刷新下面，左边标签、右边输入框（与读数同一右边界）。读数网格因此恢复为**纯数字**（模型行 + 余额构成），设置项与面板的控制按钮聚在一起。位置之外的行为不变（提交/回车、拒绝空值与负数、刷新不覆盖半途输入、写回同一个 namespace）。
 - **0.2.6（低余额阈值搬进面板）**：阈值原本是「设置 → 插件 → 插件配置 → 会话费用显示」里的一张卡片，而它唯一的作用就是给**本面板与 pill 的余额读数**上色——要改颜色得先离开看颜色的地方。0.2.6 把编辑器搬进明细面板，并**取消 `settings.plugin.item` 注册**（客户端从此只注册 composer dock 一个槽位）。持久化路径没变：仍是 `session-cost` settings namespace → `~/.dsh/settings.yaml`，旧值原样沿用，0.1.1 及更早的 localStorage 迁移逻辑仍在。空串或负数不提交并把输入框恢复成已存值。
 - **0.1.8（DSH 0.1.2 适配）**：rc.1 起 live session 不再携带 `.events` 数组——事件总数读 `session.seq`、逐条读 `session.eventAt(seq)`（与官方 `dsh-token-meter` 相同的读法），费用折叠已适配；客户端注入模块列表同步为新架构模块（见上）。
-- **降级说明**：本版本已不再声明 `0.1.2-*` 兼容（0.2.0 起 `dshReleases` 只列 0.1.5 线）。需要 0.1.2 线的用户请使用 0.1.9。
+- **降级说明**：`dshReleases` 只列当前版本线（`0.2.0-rc.2`），`engines.dsh` 也是 `^0.2.0-rc.2`。需要 **DSH 0.1.5 线**的用户请使用 **0.2.7**；需要 **0.1.2 线**的请使用 **0.1.9**（更早的 0.1.x 见各自版本的 README）。
 
 ## 架构
 
 | 文件 | 角色 |
 | --- | --- |
-| `lib/index.js` | 服务端：`GET /api/session-cost/summary?session=<id>`（增量折叠会话事件并按模型计价）、`GET /api/session-cost/balance`（DeepSeek 余额，loopback-only 精确路由，`?refresh=1` 强制绕过缓存）；注册 `session-cost` settings namespace（`lowBalanceThreshold`，由面板内的输入框读写） |
+| `lib/index.js` | 服务端：导出 `Config`（`lowBalanceThreshold`，DSH 0.2.0 据此生成设置表单）；`GET /api/session-cost/summary?session=<id>`（增量折叠会话事件并按模型计价）、`GET /api/session-cost/balance`（DeepSeek 余额，loopback-only 精确路由，`?refresh=1` 强制绕过缓存）；经 `settings.describe()` 读 `llm-deepseek` 条目、经 credentials 缝解析 API Key；启动后一次性抢救旧 `settings.yaml` 里的阈值 |
 | `lib/cost.js` | 纯函数：按模型 token 折叠（replace-last-sample 语义）+ CNY 单价表 + 费用计算 |
 | `lib/balance.js` | 纯函数：DeepSeek 余额接口查询与状态归一化 |
-| `lib/client.js` | 浏览器端：**只注册** `conversation.composer.dock` 槽位（id `session-cost`, order 100）——设置卡片已随 0.2.6 一并移除，阈值改在面板内编辑；把费用/余额 pill 追加进自带统计栏 DOM（`startStatsRowObserver`：子树 MutationObserver + 无条件重挂 + 1 秒看门狗，统计栏迟到/被 React 重渲染/切会话重建后都会重新挂载；统计栏不存在时先挂在锚点自身；`updateMergeNode` 原地 patch 数值；**不改统计栏自身的任何样式**），点击展开挂到 `document.body` 的明细面板（`placeOpenPanel` 做视口夹取），面板末行是低余额阈值输入框（写回 `session-cost` namespace） |
+| `lib/client.js` | 浏览器端：**只注册** `conversation.composer.dock` 槽位（id `session-cost`, order 100）；把费用/余额 pill 追加进自带统计栏 DOM（`startStatsRowObserver`：子树 MutationObserver + 无条件重挂 + 1 秒看门狗，统计栏迟到/被 React 重渲染/切会话重建后都会重新挂载；统计栏不存在时先挂在锚点自身；`updateMergeNode` 原地 patch 数值；**不改统计栏自身的任何样式**），点击展开挂到 `document.body` 的明细面板（`placeOpenPanel` 做视口夹取），面板里「更新于 / ⟳」下面一行是低余额阈值输入框（经 `ctx.configForms.get("session-cost")` 读写本插件配置） |
 
 费用为**估算值**：token 用量来自会话日志中 provider 上报的 usage 样本，单价表为写死的默认值，价格变动后请更新 `lib/cost.js` 的 `DEFAULT_PRICING`（或通过插件配置 `pricing` 覆盖）。
 
