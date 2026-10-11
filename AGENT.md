@@ -12,6 +12,8 @@ DSH（DeepSeek Harness）web 插件：把「本会话费用估算 + DeepSeek 账
 
 - `lib/index.js` — 服务端 half（cordis plugin，`inject: ["webServer","sessions","credentials","settings"]`）
   - **`export const Config = z.object({ lowBalanceThreshold })`：DSH 0.2.0 的设置来源**。0.1.x 的 `ctx.settings.register(ns, schema)` 已不存在；插件导出的 `Config` 就是表单，DSH 以 **profile entry id** 为键（本插件 = bundle patch 里的 `id: session-cost`）生成/持久化。未声明的键（`pricing`）由 schemastery 原样保留，服务端继续按老办法从 `apply(ctx, config)` 里宽松读取
+    - **每个可编辑字段都必须 `.volatile()`，这是硬要求而不是风格**：`SettingsForms` 只用 `volatileForm(schema)`（收集带 `meta.volatile` 的字段）建表单，一个都没有就返回 `undefined` → 条目**从 `describe()` 消失**（浏览器表单永远 `unavailable`，读不到也写不进）且写入抛 `Plugin entry "…" has no volatile fields`。两个失败都是静默的（编辑器看起来完全正常），0.3.0 就是这么让"低余额阈值设置不生效"的；`settings-smoke.mjs` 有一条断言盯着 schema 信封里的 `meta.volatile`
+    - **volatile 字段解析出来的是活单元格 `{ get() }`，不是普通值**（`JSON.stringify(cell) === "{}"`）：Host 不要直接读它做运算，默认值比较也要用独立常量（`DEFAULT_LOW_BALANCE_THRESHOLD`），别写 `Config({}).字段`。DSH 在投影表单前会自己 `plainConfig()` 拆单元格
   - `foldSessionCost()`：增量折叠 live session 事件 → `computeCost()`（`lib/cost.js` 纯函数）
   - **`liveSessionEvents()`：session 事件读取的唯一入口（双兼容，见下）**
   - `entryConfig(ctx, "llm-deepseek")`：读别的插件条目配置的唯一入口（`ctx.settings.describe()` 里按 `ns` 找，取 `value`）。**不要用 `ctx.settings.get(ns)`——0.2.0 没有这个方法**，写成 `settings?.get?.()` 会静默回落到默认值（baseURL/apiKeyEnv 被忽略）

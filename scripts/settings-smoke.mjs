@@ -8,10 +8,10 @@
 // pins the one string two processes must agree on — the profile ENTRY ID the
 // client asks `ctx.configForms.get(...)` for — against the bundle patch.
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
-import { homedir } from "node:os";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
-import { Config, SETTINGS_NAMESPACE, SessionCostSettingsSchema, resolvePricing, dshHomeDirectory, legacySettingFromDocument, apply, foldSessionCost } from "../lib/index.js";
+import { Config, SETTINGS_NAMESPACE, SessionCostSettingsSchema, resolvePricing, dshHomeDirectory, legacySettingFromDocument, rescueLegacyThreshold, apply, foldSessionCost } from "../lib/index.js";
 import { periodsOf, LEGACY_PRICING } from "../lib/cost.js";
 
 // Entry id: DSH 0.2.0 keys a plugin's config form by its profile entry id, so
@@ -24,13 +24,35 @@ const patch = readFileSync(new URL("../cordis.patch.yml", import.meta.url), "utf
 assert.match(patch, new RegExp(`id:\\s*${SETTINGS_NAMESPACE}\\s*$`, "m"), "the bundle patch must insert this exact entry id");
 assert.equal(SessionCostSettingsSchema, Config, "the 0.1.x schema name must alias the current Config");
 
-// Empty section → schema defaults (absent user layer resolves through these).
-assert.deepEqual(Config({}), { lowBalanceThreshold: 10 });
+// The volatile marker is what makes the field exist as far as DSH 0.2.0 is
+// concerned: `SettingsForms` projects every form through `volatileForm()`,
+// which returns undefined when no field carries `meta.volatile` — the entry is
+// then dropped from `describe()` (the browser form never leaves `unavailable`,
+// so the panel keeps the built-in default) and every write throws `Plugin entry
+// "session-cost" has no volatile fields`. The editor still LOOKS configurable,
+// so nothing else catches this: assert the marker on the serialized envelope.
+const envelope = Config.toJSON();
+const nodes = Object.values(envelope.refs ?? {});
+const thresholdNode = nodes.find((node) => node.type === "number" && node.meta?.default === 10);
+assert.ok(thresholdNode !== void 0, "the threshold field must be in the schema envelope");
+assert.equal(thresholdNode.meta.volatile, true, "the threshold MUST be declared volatile or DSH refuses to serve or write it");
+assert.equal(nodes.some((node) => node.type === "object" && node.dict?.lowBalanceThreshold !== void 0), true, "the root must still be an object schema");
 
-// Explicit values pass through.
-assert.deepEqual(Config({ lowBalanceThreshold: 15 }), {
-	lowBalanceThreshold: 15
-});
+// A volatile field resolves to a live CELL (`{ get() }`), not a plain value —
+// its JSON is `{}`. Reading such a field directly in `apply()` would hand an
+// object to arithmetic, so this half deliberately never reads the threshold
+// (only the plain, undeclared `pricing`), and DSH unwraps cells before it
+// projects the form the browser validates against.
+const thresholdCell = Config({ lowBalanceThreshold: 5 }).lowBalanceThreshold;
+assert.equal(typeof thresholdCell, "object", "a volatile field must resolve to a live cell");
+assert.equal(typeof thresholdCell.get, "function", "the cell must expose get()");
+assert.equal(JSON.stringify(thresholdCell), "{}", "the cell serializes as an empty object");
+
+// Absent user layer → the cell reports the schema default.
+assert.equal(Config({}).lowBalanceThreshold.get(), 10, "an absent section resolves through the default");
+
+// Explicit values are carried by the cell.
+assert.equal(Config({ lowBalanceThreshold: 15 }).lowBalanceThreshold.get(), 15, "an explicit value is carried");
 
 // Negative threshold is rejected.
 assert.throws(() => Config({ lowBalanceThreshold: -1 }), /lowBalanceThreshold/, "negative threshold must throw");
@@ -73,6 +95,48 @@ assert.equal(legacySettingFromDocument("session-cost:\n  displayMode: stats\noth
 assert.equal(dshHomeDirectory({ DSH_HOME: "  C:/custom-home  " }), "C:/custom-home", "DSH_HOME wins and is trimmed");
 assert.equal(dshHomeDirectory({ DSH_HOME: "   " }), join(homedir(), ".dsh"), "a blank DSH_HOME falls back to the home directory");
 assert.equal(dshHomeDirectory({}), join(homedir(), ".dsh"), "without DSH_HOME the home directory is used");
+
+// ---- the rescue end to end ----------------------------------------------
+// A full pass with a fake host and a temporary DSH home: the value only moves
+// when the entry has no user layer of its own, and it goes through
+// `settings.update(entryId, patch)` — the 0.2.0 write API (the old
+// `register`/`get` pair is gone).
+const rescueHome = mkdtempSync(join(tmpdir(), "dsh-session-cost-"));
+const legacyFile = join(rescueHome, "settings.yaml.imported");
+writeFileSync(legacyFile, "session-cost:\n  displayMode: stats\n  lowBalanceThreshold: 5\n");
+const rescueWrites = [];
+const rescueCtx = {
+	logger: { info: () => {}, warn: () => {} },
+	settings: {
+		describe: () => [{ ns: "session-cost", value: { lowBalanceThreshold: 10 }, user: {} }],
+		update: (ns, patch) => { rescueWrites.push([ns, patch]); return Promise.resolve(); }
+	}
+};
+const previousHome = process.env.DSH_HOME;
+process.env.DSH_HOME = rescueHome;
+try {
+	await rescueLegacyThreshold(rescueCtx);
+	assert.deepEqual(rescueWrites, [["session-cost", { lowBalanceThreshold: 5 }]], "the legacy value must be written once");
+	// A second boot sees a user value and stays out of the way.
+	rescueWrites.length = 0;
+	rescueCtx.settings.describe = () => [{ ns: "session-cost", value: { lowBalanceThreshold: 5 }, user: { lowBalanceThreshold: 5 } }];
+	await rescueLegacyThreshold(rescueCtx);
+	assert.deepEqual(rescueWrites, [], "an entry that already carries a user value must not be touched");
+	// A document holding the schema default is not worth a write either.
+	rescueCtx.settings.describe = () => [{ ns: "session-cost", value: { lowBalanceThreshold: 10 }, user: {} }];
+	writeFileSync(legacyFile, "session-cost:\n  lowBalanceThreshold: 10\n");
+	await rescueLegacyThreshold(rescueCtx);
+	assert.deepEqual(rescueWrites, [], "the schema default must not be written back");
+	// A missing document (or a failing settings service) must stay silent.
+	rescueCtx.settings.describe = () => [];
+	await rescueLegacyThreshold(rescueCtx);
+	await rescueLegacyThreshold({ logger: { info: () => {}, warn: () => {} }, settings: { describe: () => { throw new Error("boom"); }, update: () => { throw new Error("boom"); } } });
+	assert.deepEqual(rescueWrites, [], "no write may come from a broken or empty host state");
+} finally {
+	if (previousHome === void 0) delete process.env.DSH_HOME;
+	else process.env.DSH_HOME = previousHome;
+	rmSync(rescueHome, { recursive: true, force: true });
+}
 
 // ---- the plugin body against a fake host --------------------------------
 // DSH 0.2.0 dropped `settings.register(ns, schema)` (the Config export is the
