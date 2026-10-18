@@ -310,6 +310,42 @@ parent4.appendChild(anchor);
 assert.equal(findStatsRow(parent4), wrapper, "nested stats bar must resolve through the wrapper");
 assert.equal(findStatsRow(new El("div")), null, "empty container should return null");
 
+// 0.2.1 shape: the row is GONE. `activity` (order 0) and `usage` (order 1) are
+// separate composer-dock entries carrying the SINGULAR `data-composer-stat`, so
+// the row the third reading lines up in is the dock container itself. The
+// activity entry still reads `N 轮 M 步`, i.e. exactly what the counts-text
+// fallback matches — an attribute-first lookup is what keeps the merge out of
+// the pill instead of nesting it inside one.
+const splitActivity = new El("span");
+splitActivity.setAttribute("data-composer-stat", "activity");
+splitActivity.className = "bOPqQW_anchor";
+const splitActivityBtn = new El("button");
+splitActivityBtn.className = "bOPqQW_pill";
+splitActivityBtn.textContent = "2 轮 61 步";
+splitActivity.appendChild(splitActivityBtn);
+const splitUsage = new El("span");
+splitUsage.setAttribute("data-composer-stat", "usage");
+splitUsage.className = "bOPqQW_anchor";
+splitUsage.textContent = "6.6M tok · 缓存命中 97%";
+const splitDock = new El("div");
+splitDock.className = "uV2eYG_dock";
+splitDock.appendChild(splitActivity);
+splitDock.appendChild(splitUsage);
+splitDock.appendChild(anchor);
+assert.equal(findStatsRow(splitDock), splitDock, "0.2.1 split bar: the dock container is the row");
+assert.notEqual(findStatsRow(splitDock), splitActivity, "0.2.1 split bar: the merge must not nest in the activity pill");
+// One surviving pill (the other renders null when it has nothing to show) is
+// still the same row; `[data-composer-stat]` also matches below a wrapper.
+const splitWrapper = new El("div");
+splitWrapper.appendChild(splitActivity);
+const wrappedDock = new El("div");
+wrappedDock.appendChild(splitWrapper);
+wrappedDock.appendChild(new El("div"));
+assert.equal(findStatsRow(wrappedDock), wrappedDock, "a dock entry nested in a wrapper still marks the row");
+// Our own anchor is never the row, and the old text row is still found when no
+// pill attribute is present anywhere.
+assert.equal(findStatsRow(pillsHost), pillsRow, "the 0.1.5 attribute still wins over the split-bar probe");
+
 // ---- buildMergeNode ---------------------------------------------------
 const mergeData = (over = {}) => ({
 	cost: 0.4549,
@@ -980,6 +1016,65 @@ styledLive.sync();
 assert.deepEqual(inlineStyleProps(styledRow), ["max-width"], "a re-sync must not add styles either");
 styledLive.dispose();
 assert.deepEqual(inlineStyleProps(styledRow), ["max-width"], "teardown must leave the bar exactly as DSH set it");
+
+// ---- 0.2.1 split bar: the reading joins the dock as a SIBLING ---------
+// DSH 0.2.1 replaced the single `StatsPills` row with two composer-dock entries
+// (`activity`, `usage`) marked `data-composer-stat`. The old lookup fell through
+// to its counts-text fallback, matched the ACTIVITY pill and appended the
+// reading INSIDE that pill's anchor — a gap short of the row it belongs to, in a
+// box it does not own. The dock container is the row now, so the reading must
+// come out as a dock child next to the two built-in entries.
+const splitHost = new El("div");
+root.appendChild(splitHost);
+const splitAnchor = new El("div");
+splitAnchor.setAttribute("data-session-cost-anchor", "");
+splitHost.appendChild(splitAnchor);
+const liveSplitActivity = new El("span");
+liveSplitActivity.setAttribute("data-composer-stat", "activity");
+const liveSplitActivityBtn = new El("button");
+liveSplitActivityBtn.textContent = "2 轮 61 步";
+liveSplitActivity.appendChild(liveSplitActivityBtn);
+const liveSplitUsage = new El("span");
+liveSplitUsage.setAttribute("data-composer-stat", "usage");
+liveSplitUsage.textContent = "6.6M tok · 缓存命中 97%";
+splitHost.appendChild(liveSplitActivity);
+splitHost.appendChild(liveSplitUsage);
+const splitLive = startStatsRowObserver(splitAnchor, () => buildMergeNode(zhDict, mergeData()));
+const splitMerge = splitHost.querySelector("[data-session-cost-merge]");
+assert.ok(splitMerge !== null, "the split bar must host the merge in the dock container");
+assert.equal(splitMerge.parentElement, splitHost, "the reading must be a dock child, not a built-in pill's");
+assert.equal(liveSplitActivity.querySelector("[data-session-cost-merge]"), null, "the reading must NOT nest inside the activity pill");
+assert.equal(splitAnchor.getAttribute("data-solo"), null, "the anchor must hide once the dock hosts the merge");
+assert.equal(splitAnchor.querySelector("[data-session-cost-merge]"), null, "the anchor must not keep a second copy");
+splitLive.dispose();
+assert.equal(splitHost.querySelector("[data-session-cost-merge]"), null, "teardown must remove the reading from the dock");
+
+// A single surviving pill is still the same row (fresh elements: the shim's
+// appendChild does not move a node out of its previous parent).
+const oneHost = new El("div");
+root.appendChild(oneHost);
+const oneAnchor = new El("div");
+oneAnchor.setAttribute("data-session-cost-anchor", "");
+oneHost.appendChild(oneAnchor);
+const oneUsage = new El("span");
+oneUsage.setAttribute("data-composer-stat", "usage");
+oneHost.appendChild(oneUsage);
+const oneLive = startStatsRowObserver(oneAnchor, () => buildMergeNode(zhDict, mergeData()));
+assert.equal(oneHost.querySelector("[data-session-cost-merge]")?.parentElement, oneHost, "one surviving pill still reads as the row");
+assert.equal(oneAnchor.getAttribute("data-solo"), null, "one surviving pill means no standalone fallback");
+oneLive.dispose();
+
+// With NO built-in reading at all (a brand-new session, or the second a cold
+// session takes to load) the reading falls back to the anchor's own row.
+const noneHost = new El("div");
+root.appendChild(noneHost);
+const noneAnchor = new El("div");
+noneAnchor.setAttribute("data-session-cost-anchor", "");
+noneHost.appendChild(noneAnchor);
+const noneLive = startStatsRowObserver(noneAnchor, () => buildMergeNode(zhDict, mergeData()));
+assert.equal(noneAnchor.getAttribute("data-solo"), "true", "no built-in reading at all must fall back to the anchor");
+assert.ok(noneAnchor.querySelector("[data-session-cost-merge]") !== null, "the fallback reading lives in the anchor");
+noneLive.dispose();
 
 // ---- fmtCny -----------------------------------------------------------
 assert.equal(fmtCny("7.09", 2), "7.09", "numeric string should format");
