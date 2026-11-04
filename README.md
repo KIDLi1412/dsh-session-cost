@@ -161,24 +161,38 @@ dsh plugin --profile web remove @kidli1412/dsh-session-cost
 
 > 官方英文页另有**美元**价格（Flash $0.15/$0.30 输入、$0.003/$0.006 缓存命中、$0.6/$1.2 输出），与本表的人民币价按同一份价目表换算，插件统一按**人民币**计价（与余额接口的 CNY 口径一致）。
 
-插件配置（可选）可覆盖定价——平峰格式（所有时段同价）或分时段格式：
+插件配置（可选）可覆盖定价。`pricing` 是**没有声明在 `Config` 表单里**的键——schemastery 会原样保留它，服务端从 `apply(ctx, config)` 里读取——所以它**不出现在设置界面**，只能写进 **profile 的 patch 层**：`~/.dsh/profiles/web/cordis.patch.yml` 里 `id: session-cost` 那个条目的 `config` 下。
 
 ```yaml
-# ~/.dsh/settings.yaml 或 profile 插件配置
-session-cost:
-  pricing:
-    deepseek-v4-flash:
-      input: 1
-      cacheRead: 0.02
-      cacheWrite: 1
-      output: 2
-    # 或分时段（offpeak/peak 各自覆盖，未给字段继承默认）：
-    # deepseek-v4-pro:
-    #   offpeak: { input: 4.5, output: 13.5 }
-    #   peak: { input: 9, output: 27 }
+# ~/.dsh/profiles/web/cordis.patch.yml
+- id: session-cost
+  name: "@kidli1412/dsh-session-cost"
+  config:
+    lowBalanceThreshold: 5        # 设置面板里那个阈值
+    pricing:
+      # 平峰格式：一条价覆盖所有时段（含 legacy / V4 世代）
+      deepseek-v4-flash:
+        input: 1
+        cacheRead: 0.02
+        cacheWrite: 1
+        output: 4
+      # 分时段格式：条目里同时有 offpeak 与 peak 才算；未给的字段继承该键的默认价
+      deepseek-v4-pro:
+        offpeak: { input: 4.5, output: 13.5 }
+        peak: { input: 9, output: 27 }
+      # 订阅 / 第三方渠道的模型 id：默认表里没有这个键，所以四个字段都要给
+      deepseek-v4.1-flash:
+        input: 1
+        cacheRead: 0.02
+        cacheWrite: 1
+        output: 4
 ```
 
-`pricing` 与配置卡写入的 `lowBalanceThreshold` 共存于同一个 `session-cost:` section，互不覆盖（schemastery 解析保留未知键；`pricing` 仍由服务端从插件 config 读取）。
+- **按键合并**到默认表：改已有键（如 `deepseek-v4-flash`）就是换掉那个键的价，加新键（如订阅渠道的 id）就是新增一行；单位始终是 **CNY / 百万 tokens**。
+- 新键的缺省字段按 **0** 计（不是继承 Flash 的价），所以新建条目要把 `input` / `cacheRead` / `cacheWrite` / `output` 四样写全。
+- 只接受有限非负数；非法值回落到默认（新键则回落 0）。
+- 改完要**重启 `dsh web`**：profile 的 patch 在启动时合成，改文件不会热加载。
+- `pricing` 与设置面板写入的 `lowBalanceThreshold` 同处 `session-cost` 条目的 config，互不覆盖。
 
 ## 安全
 
