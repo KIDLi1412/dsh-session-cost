@@ -238,8 +238,17 @@ globalThis.window = {
 globalThis.document = document;
 globalThis.MutationObserver = MutationObserverStub;
 globalThis.Event = EventStub;
-vm.runInThisContext(readFileSync(new URL("../lib/client.js", import.meta.url), "utf8"));
+const clientSource = readFileSync(new URL("../lib/client.js", import.meta.url), "utf8");
+vm.runInThisContext(clientSource);
 assert.ok(descriptor !== null, "client bundle did not self-register");
+// The panel's pricing footnote is the only price copy the user actually reads,
+// and it has drifted before: after the 2026-09-10 V4.1-Flash cutover it still
+// quoted the V4-era rates (¥1.5–3.0 / ¥0.05–0.10 / ¥4.5–9.0) while the table
+// had already moved to ¥1/¥2 / ¥0.02/¥0.04 / ¥4/¥8. Pin the current era and
+// keep the retired figures from coming back.
+assert.match(clientSource, /2026-09-10/, "the pricing footnote must name the current price generation");
+assert.match(clientSource, /¥1\/¥2/, "the pricing footnote must quote the current input rates");
+assert.doesNotMatch(clientSource, /1\.5–3\.0/, "the retired V4-era rates must not come back to the footnote");
 const requireStub = (id) => ({});
 const factory = descriptor.factory;
 const exportsObj = factory(requireStub);

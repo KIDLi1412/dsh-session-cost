@@ -59,7 +59,8 @@ DSH（DeepSeek Harness）web 插件：把「本会话费用估算 + DeepSeek 账
 - 计价是**两层**：`periodOf(time)` 先判**价格世代**（`legacy` → `v4:peak`/`v4:offpeak` → 当前 `peak`/`offpeak`），再由 `peakStateOf(time)` 提供日内峰谷。V4 世代必须同时保留两个维度，否则 V4 时代的高峰流量会被按空闲价计（少算一半）
 - 世代表：`DEFAULT_PRICING`（2026-09-10 起，V4.1-Flash：Flash ¥1/2、¥0.02/0.04、¥4/8；Pro ¥4.5/9、¥0.15/0.30、¥13.5/27）、`V4_ERA_PRICING`（2026-08-17–09-09）、`LEGACY_PRICING`（之前的平峰价）。`PERIODS` 数组是 fold/计价共用的时段清单，加时段要同步 `zeroBuckets` 初始化、`periodsOf` 的 fallback 与 row 汇总
 - `priceOf` 按**名称边界前缀**匹配（`deepseek-v4-flash-2026-01` 命中 `deepseek-v4-flash`，`deepseek-v99` 不命中）；世代表用 `eraEntryOf` + `PRICING_ALIASES` 解析别名。**新增模型 id 时必须同步当前表与别名表**，否则费用静默变 ¥0（0.1.5 的 `deepseek-flash` 就是这么炸的）
-- 每次官方调价：更新 `DEFAULT_PRICING`、把上一代价目挪进新世代表并加 cutover 常量、同步 README 定价小节与 `scripts/smoke.mjs` 的用例
+- 每次官方调价：更新 `DEFAULT_PRICING`、把上一代价目挪进新世代表并加 cutover 常量、同步 README 定价小节与 `scripts/smoke.mjs` 的用例，**以及面板脚注 `tooltipPricingNote`（zh / en 两份，在 `lib/client.js`）**——脚注是面向用户的价格文案唯一副本：2026-09 换成 V4.1-Flash 后它一直停在 V4 时代的 ¥1.5–3.0 / ¥0.05–0.10 / ¥4.5–9.0，到 2026-11 才被发现。`dom-smoke.mjs` 现在断言脚注带当前世代标记（`2026-09-10`）且不再出现旧价
+- **订阅 / 第三方渠道的模型 id 故意不计价**（例如 opencode-go 订阅上报的 `deepseek-v4.1-flash`，官方叫 `deepseek-flash`）：官方价目里没有它，面板显示 `未计价`，用户可用 `pricing` 覆盖。不要把订阅渠道的 id 硬塞进 `DEFAULT_PRICING` 去套官方价——订阅不是逐 token 计费，那样只会给出误导性的"精确"数字
 
 ## 修改守则
 
