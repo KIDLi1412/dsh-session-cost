@@ -159,6 +159,31 @@ assert.deepEqual(routes.map((route) => [route.kind, route.path]), [
 assert.equal(typeof routes[0].handler, "function", "each route must own a handler");
 assert.deepEqual(settingsCalls, [], "a host without a legacy document must not touch the settings service");
 
+// ---- a stock cordis context does not expose `root` ----------------------
+// `root` is a service this plugin never injects, and reading it THROWS
+// ("cannot get property \"root\" without inject") — an optional chain cannot
+// absorb a throwing getter. 0.3.5 read `ctx.root?.loader` while registering,
+// so the throw escaped `apply()` and neither route mounted: a real host
+// answered 404 on /api/session-cost/summary while the client polled it forever.
+// The fake context above carries a plain `root: {}`, which is exactly why the
+// suite stayed green. This one models the host: touching `root` throws.
+const stockRoutes = [];
+const stockCtx = {
+	logger: { info: () => {}, warn: () => {} },
+	effect: (fn) => { fn(); return () => {}; },
+	get: (key) => (key === "settings" ? { describe: () => [], update: () => Promise.resolve() } : void 0),
+	webServer: { register: (route) => { stockRoutes.push(route); return () => {}; } }
+};
+Object.defineProperty(stockCtx, "root", {
+	enumerable: true,
+	get() { throw new Error('cannot get property "root" without inject'); }
+});
+apply(stockCtx, {});
+assert.deepEqual(stockRoutes.map((route) => [route.kind, route.path]), [
+	["exact", "/api/session-cost/summary"],
+	["exact", "/api/session-cost/balance"]
+], "a context without an injected `root` must still register both routes");
+
 // ---- the resolver path over a fake sessions service ---------------------
 // `foldSessionCost` is the only reader of the session log; 0.2.0 kept both
 // `sessions.list()` and `session.seq` / `session.eventAt(seq)`. The event shape
